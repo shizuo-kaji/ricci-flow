@@ -1,16 +1,18 @@
+## original by Harrison Chapman https://github.com/hchapman/ricci-flow
+## bug fix/modified by S. Kaji (Dec. 2020)
+
 import numpy
 from scipy import sparse
 from numpy.linalg import norm, inv, lstsq, solve
-from itertools import combinations, izip, product
+from itertools import combinations, product
 import functools
 from numpy import dot
 from scipy.sparse import linalg
-
-sqrt = numpy.sqrt
-cos = numpy.cos
-pi = numpy.pi
-
-numpy.seterr(all='raise')
+from plyfile import PlyData, PlyElement
+import argparse,os,time
+from functools import reduce
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 class IdentityDictMap(object):
     def __init__(self, output=1, domain=None):
@@ -20,6 +22,11 @@ class IdentityDictMap(object):
         if self._domain and i not in self._domain:
             raise KeyError()
         return self._o
+
+def save_ply(vert,face,fname):
+    el1 = PlyElement.describe(numpy.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f4'), ('y', 'f4'),('z', 'f4')]), 'vertex')
+    el2 = PlyElement.describe(numpy.array([([x[0],x[1],x[2]], 0) for x in face],dtype=[('vertex_indices', 'i4', (3,)), ('red', 'u1')]), 'face')
+    PlyData([el1,el2], text=True).write(fname)
 
 def partition_face(face):
     i,j,k = face
@@ -32,16 +39,13 @@ def triangulate(poly):
         yield poly
     else:
         e0 = poly[0]
-        for e1, e2 in izip(poly[1:], poly[2:]):
+        for e1, e2 in zip(poly[1:], poly[2:]):
             yield (e0, e1, e2)
 
 def read_obj_file(f):
     verts = []
     normals = []
-    edges = []
-    lengths = dict()
     faces = []
-    boundaries = []
     for line in f:
         tok = line.split()
         if not tok:
@@ -49,7 +53,7 @@ def read_obj_file(f):
         elif tok[0] == "#":
             continue
         elif tok[0] == "o":
-            print "Reading %s"%tok[1]
+            print("Reading %s"%tok[1])
         elif tok[0] == "v":
             verts.append(numpy.array([float(x) for x in tok[1:]]))
         elif tok[0] == "vn":
@@ -60,10 +64,15 @@ def read_obj_file(f):
             for face in triangulate(poly):
                 faces.append(frozenset(face))
 
-    maxnorm = max(numpy.linalg.norm(v) for v in verts)
     verts = numpy.array(verts)
-    verts = verts/maxnorm/2
+    return(verts,faces)
 
+def createMesh(verts,faces):
+    edges = []
+    lengths = dict()
+    boundaries = []
+    maxnorm = max(numpy.linalg.norm(v) for v in verts)
+    verts = verts/maxnorm/2
     for face in faces:
         for edge in combinations(face, 2):
             elen = norm(verts[edge[0]] - verts[edge[1]])
@@ -74,22 +83,20 @@ def read_obj_file(f):
                 boundaries.append(edge)
             else:
                 boundaries.remove(edge)
-
-    print "Done... %s boundary edges"%len(boundaries)
-    print "%s vertices, %s edges, %s faces"%(len(verts), len(edges), len(faces))
     if boundaries:
         b_verts = sorted(list(reduce(lambda A,B: A.union(B), boundaries)))
     else:
         b_verts = []
-    return verts, b_verts, edges, faces, lengths
+    return TriangleMesh(range(len(verts)),b_verts,edges,faces,lengths)
 
 class TriangleMesh(object):
-    def __init__(self, verts, b_verts, edges, faces, bg_geom="euclidean"):
+    def __init__(self, verts, b_verts, edges, faces, lengths, bg_geom="euclidean"):
         self.verts = verts
         self.b_verts = b_verts
         self.edges = edges
         self.faces = faces
         self.bg_geom = bg_geom
+        self.lengths = lengths
 
     def adjacent_edges(self, vert):
         return [edge for edge in self.edges if vert in edge]
@@ -114,7 +121,7 @@ class DiscreteRiemannianMetric(object):
         # Curvatures K_i
         self._K = None
 
-        for (i,j), l in length_map.iteritems():
+        for (i,j), l in length_map.items():
             self._lmap[i,j] = l
             self._lmap[j,i] = l
 
@@ -133,7 +140,7 @@ class DiscreteRiemannianMetric(object):
         for vert in self._mesh.verts:
             self._K[vert] = self.curvature(vert)
 
-    def is_ok(self):
+    def is_ok(self): ## check triangle inequality
         for face in self._mesh.faces:
             edges = [frozenset(e) for e in combinations(face,2)]
             k = len(edges)
@@ -146,13 +153,12 @@ class DiscreteRiemannianMetric(object):
         i,j = edge
         return self._lmap[i,j]
 
-    def abc_for_vert(self, face, vert):
+    def abc_for_vert(self, face, vert): # enumerate edge lengths of a face
         assert(vert in face)
         other_v = list(face - set([vert]))
         edge_a = [vert, other_v[0]]
         edge_b = [vert, other_v[1]]
         edge_c = other_v
-
         return [self.length(e_i) for e_i in (edge_a,edge_b,edge_c)]
 
     def angle(self, face, vert):
@@ -162,22 +168,16 @@ class DiscreteRiemannianMetric(object):
     def law_of_cosines(self, a,b,c):
         if self._mesh.bg_geom == "euclidean":
             ratio = (a**2 + b**2 - c**2)/(2.0*a*b)
-
             return numpy.arccos(ratio)
 
     def compute_angle(self, face, vert):
         a,b,c = self.abc_for_vert(face,vert)
         #print a,b,c
         assert(a != 0 and b != 0 and c != 0)
-
         try:
             return self.law_of_cosines(a,b,c)
         except FloatingPointError:
-            print self.is_ok()
-            print "~~~~~~~~~~~~ error"
-            print face, vert
-            print a,b,c
-            print (a**2 + b**2 - c**2)/(2.0*a*b)
+#            print(self.is_ok())
             return 0.0001
             raise
 
@@ -195,24 +195,21 @@ class DiscreteRiemannianMetric(object):
         i,j,k = face
         gamma = self._theta[(i,j,k)]
         a,b = self.length((i,j)), self.length((i,k))
-
         if self._mesh.bg_geom == "euclidean":
             return .5*a*b*numpy.sin(gamma)
 
     def area(self):
         return sum([self.face_area(face) for face in self._mesh.faces])
 
-    EPSILON_DICT = {
-        'euclidean':   0,
-        'spherical':   1,
-        'hyperbolic': -1,
-    }
-
     def gb_chi(self):
-        epsilon = self.EPSILON_DICT[self._mesh.bg_geom]
-        return (self.total_curvature() + epsilon*self.area())/(numpy.pi*2)
+        EPSILON_DICT = {
+            'euclidean':   0,
+            'spherical':   1,
+            'hyperbolic': -1,
+        }
+        return (self.total_curvature() + EPSILON_DICT[self._mesh.bg_geom]*self.area())/(numpy.pi*2)
 
-    def as_cp_metric(self, scheme="inversive"):
+    def as_cp_metric(self, scheme="inversive"): # compute CP metric
         gamma = numpy.zeros((self._n,))
         eta = sparse.lil_matrix((self._n, self._n))
 
@@ -281,7 +278,6 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
                 [(2.5/3.0)*min(g.length(edge) for edge in mesh.adjacent_edges(vert)) for
                  vert in mesh.verts])
 
-        print gamma
 
         # For Thurston's CP scheme, all adjacent circles
         # should be at least tangent (otherwise we're hitting)
@@ -300,53 +296,44 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
                 phi[i,j] = phi_ij
                 phi[j,i] = phi_ij
 
-        print phi.todense()
         ret = ThurstonCPMetric(mesh, gamma, phi)
 
         # This new metric should approximate the old
-        #assert numpy.allclose(g._lmap.todense(), ret._l.todense())
+        assert numpy.allclose(g._lmap.todense(), ret._l.todense())
 
         return ret
 
     def _constant_curvature_goal(self):
         return (2*self._mesh.chi()*numpy.pi)/self._n
 
-    def gradient_descent(self, target_K=None, epsilon=0.05, thresh=0.01):
+    def ricci_flow(self, target_K=None, dt=0.05, thresh=1e-4, use_hess=False):
         if target_K is None:
             # Constant curvature
             target_K = self._constant_curvature_goal()
 
         g = ThurstonCPMetric(self._mesh, self._gamma, self._phi)
-
-        K = g._K
-        deltaK = target_K - K
-        while numpy.max(deltaK) > thresh:
-            g.u = g.u + epsilon*(deltaK)
-            g.u = g.u - sum(g.u)/g._n
-            g.update()
-            K = g._K
-            deltaK = target_K - K
-            print numpy.max(deltaK)
-
-        return g
-
-    def newton(self, target_K=None, dt=0.05, thresh=1e-4):
-        if target_K is None:
-            # Constant curvature
-            target_K = self._constant_curvature_goal()
-
-        g = ThurstonCPMetric(self._mesh, self._gamma, self._phi)
-
-        K = g._K
-        DeltaK = target_K - K
-        while numpy.max(numpy.abs(DeltaK)) > thresh:
-            H = self.hessian()
-            deltau = sparse.linalg.lsqr(H, DeltaK)[0]
-            g.u -= dt*deltau
-            g.update()
-            K = g._K
-            DeltaK = target_K - K
-            print numpy.max(numpy.abs(DeltaK))
+        DeltaK = target_K - g._K
+        niter = 0
+        if use_hess:
+            while numpy.max(numpy.abs(DeltaK)) > thresh:
+                H = self.hessian()
+                deltau = sparse.linalg.lsqr(H, DeltaK)[0]
+                g.u -= dt*deltau
+                g.u = g.u - sum(g.u)/g._n
+                g.update()
+                DeltaK = target_K - g._K
+                niter += 1
+                if niter % 10 == 0:
+                    print("niter:", niter, " Max in \DeltaK:", numpy.abs(DeltaK).max())
+        else:
+            while DeltaK.max() > thresh:
+                g.u += dt*(DeltaK)
+                g.u = g.u - sum(g.u)/g._n
+                g.update()
+                DeltaK = target_K - g._K
+                niter += 1
+                if niter % 10 == 0:
+                    print("niter:", niter, " Max in \DeltaK:", DeltaK.max())
 
         return g
 
@@ -372,7 +359,7 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
         i,j = list(edge)
         g_i, g_j = self._gamma[[i,j]]
         if self._mesh.bg_geom == "euclidean":
-            return sqrt(2*g_i*g_j*cos(self._phi[i,j]) + g_i**2 + g_j**2)
+            return numpy.sqrt(2*g_i*g_j*numpy.cos(self._phi[i,j]) + g_i**2 + g_j**2)
 
     def _s(self, x):
         if self._mesh.bg_geom == "euclidean":
@@ -411,19 +398,19 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
                  (t(l_j,g_i,g_k), 0,              t(l_j,g_k,g_i)),
                  (t(l_k,g_i,g_j), t(l_k,g_j,g_i), 0            )))
             Theta = numpy.cos(numpy.array(
-                ((pi,   th_k, th_j),
-                 (th_k, pi,   th_i),
-                 (th_j, th_i, pi))))
+                ((numpy.pi,   th_k, th_j),
+                 (th_k, numpy.pi,   th_i),
+                 (th_j, th_i, numpy.pi))))
 
             Tijk = -.5/A * (L.dot(Theta).dot(inv(L)).dot(D))
-            for a,row in izip((i,j,k), Tijk):
-                for b,dtheta in izip((i,j,k), row):
+            for a,row in zip((i,j,k), Tijk):
+                for b,dtheta in zip((i,j,k), row):
                     if (a,b) in H:
                         H[a,b] += dtheta
                     else:
                         H[a,b] = dtheta
         Hm = sparse.dok_matrix((n,n))
-        for (du_i,dtheta_j), val in H.iteritems():
+        for (du_i,dtheta_j), val in H.items():
             Hm[du_i, dtheta_j] = val
         return Hm.tocsr()
 
@@ -505,8 +492,8 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             Theta = self._Theta(face)
 
             Tijk = -.5/A * (L.dot(Theta).dot(inv(L)).dot(D))
-            for a,row in izip((i,j,k), Tijk):
-                for b,dtheta in izip((i,j,k), row):
+            for a,row in zip((i,j,k), Tijk):
+                for b,dtheta in zip((i,j,k), row):
                     H[a,b] += dtheta
         return H
 
@@ -521,100 +508,75 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                               self._eps[i] * numpy.exp(2 * self.u[i]) +
                               self._eps[j] * numpy.exp(2 * self.u[j]))
 
-def unified_ricci_flow(mesh, g, Kbar, thresh=.001, dt=.05):
-    print g.is_ok()
-    cpm = g.as_cp_metric()
-    print cpm.is_ok()
-    print cpm.gb_chi()
-    Kbar = numpy.array(Kbar)
-    DeltaK = cpm.curvature_array() - Kbar
 
-    newton = True
+    def ricci_flow(self, target_K=None, dt=0.05, thresh=1e-4, use_hess=False):
+        if target_K is None:
+            # Constant curvature
+            target_K = self._constant_curvature_goal()
 
-    while DeltaK.max() > thresh:
-        #print cpm.angle(frozenset([27,28,22]), 27)
-        #print cpm.length([27,28]), cpm.length([22,28]), cpm.length([27,22])
-        #print cpm.face_area(frozenset([27,28,22]))
-        #print cpm.is_ok()
+        niter = 0
+        DeltaK = self.curvature_array() - target_K
 
-        if newton:
-            H = cpm.hessian()
-            #H = H.todense()
+        while DeltaK.max() > thresh:
+            if use_hess:
+                H = self.hessian()
+                deltau = sparse.linalg.lsqr(H, DeltaK)[0]
+                self.update_with_u( self.u + dt*deltau )
+            else:
+                # Gradient Descent
+                self.update_with_u( self.u - dt*DeltaK )
 
-            # Newton's method
-            deltau = sparse.linalg.lsqr(H, DeltaK)[0]
-            cpm.update_with_u( cpm.u + dt*deltau )
-            #print [cpm.curvature(i) for i in mesh.verts],
-
-        else:
-            # Gradient Descent
-            cpm.update_with_u( cpm.u + dt*DeltaK )
-
-        DeltaK = cpm.curvature_array() - Kbar
-        print "Max in \DeltaK: %s"%DeltaK.max()
-        #raw_input("continue... ")
-    return cpm
-
-
-# verts = numpy.array([0,1,2,3])
-# edges = numpy.array([frozenset([0,1]),frozenset([0,2]),frozenset([0,3]),
-#          frozenset([1,2]),frozenset([1,3]),frozenset([2,3])])
-# faces = numpy.array([frozenset(verts[[0,2,3]]),
-#                      frozenset(verts[[0,1,3]]),
-#                      frozenset(verts[[0,2,1]]),
-#                      frozenset(verts[[1,2,3]]),])
-
-# mesh = TriangleMesh(verts, edges, faces)
-# g = DiscreteRiemannianMetric(
-#     mesh,
-#     {e:1 for e in edges}
-# )
-
-# print g.length(edges[2])
-# print g.angle(faces[0], 0)*180/numpy.pi
-# print g.curvature(0)
-# print g.face_area(faces[0])
-# print g.area()
-# print g.total_curvature()
-# print g.gb_chi()
-
-def run_thcpm(objname="chair1"):
-    with open("%s.obj"%objname) as fp:
-        v,bv,e,f,l = read_obj_file(fp)
-
-    mesh = TriangleMesh(range(len(v)),bv,e,f)
-    g = DiscreteRiemannianMetric(mesh, l)
-
-    cp = ThurstonCPMetric.from_triangle_mesh(mesh)
-    cp.update()
-
-    unif_cp = cp.newton()
-
-def run(objname="bunny_1k"):
-    fnames = [
-        "tetra.obj",
-        "cube.obj",
-        "chair1.obj",
-        "torus.obj",
-        "teapot-low.obj",
-        "wt_teapot.obj"]
-    fnames = ["%s.obj"%objname]
-
-    for fname in fnames:
-        with open(fname) as f:
-            verts, b_verts, edges, faces, lengths = read_obj_file(f)
-
-        mesh = TriangleMesh(range(len(verts)),b_verts,edges,faces)
-        g = DiscreteRiemannianMetric(mesh, lengths)
-
-        print "Min vertex valence: %s" % mesh.min_valence()
-        print "Mesh chi: %s, G.B. chi: %s" % (mesh.chi(),g.gb_chi())
-
-    uniform_K = (2*mesh.chi()*numpy.pi)/len(verts)
-    K = [uniform_K]*len(verts)
-
-    res = unified_ricci_flow(mesh,g,K)
-
-
+            DeltaK = self.curvature_array() - target_K
+            if niter % 10 == 0:
+                print("Max in \DeltaK: %s"%DeltaK.max())
+            niter += 1
+        return self
+    
 if __name__ == "__main__":
-    run_thcpm()
+    parser = argparse.ArgumentParser(description='find metric with a desired curvature by Ricci flow')
+    parser.add_argument('--input', '-i', default="torus.obj", help='Path to an input ply file')
+    parser.add_argument('--learning_rate', '-lr', type=float, default=5e-2, help='learning rate')
+    parser.add_argument('--method', '-m', default='unified',choices=['unified','thurston'], help='method for Ricci flow')
+    parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
+    parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
+    parser.add_argument('--use_hess', '-uh', action='store_true',help='use hessian')
+    parser.add_argument('--target_curvature_scalar', '-Ks', default=99, type=float, help='target gaussian curvature value')
+    args = parser.parse_args()
+
+    os.makedirs(args.outdir,exist_ok=True)
+    fn, ext = os.path.splitext(args.input)
+    fn = fn.rsplit('_', 1)[0]
+    fn = os.path.join(args.outdir,os.path.basename(fn))
+    if ext == ".obj":
+        with open(args.input) as fp:
+            v,f = read_obj_file(fp)
+        save_ply(v,numpy.array([list(x) for x in f], dtype=numpy.int16),fn+".ply")
+    else:
+        plydata = PlyData.read(args.input)
+        v = numpy.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(numpy.float64).T
+        f = [frozenset(x) for x in plydata['face']['vertex_indices']]
+
+    mesh = createMesh(v,f)
+    if args.target_curvature_scalar > 10:
+        K = 2*mesh.chi()*numpy.pi/len(v)
+    else:
+        K = args.target_curvature_scalar
+
+    numpy.savetxt(fn+"_bv.txt",mesh.b_verts, fmt='%i')
+    g = DiscreteRiemannianMetric(mesh, mesh.lengths)
+    print("Min vertex valence: %s" % mesh.min_valence())
+    print("Mesh chi: %s, global chi: %s, target curvature: %s" % (mesh.chi(),g.gb_chi(),K))
+
+    if args.method=="unified":
+        cp = g.as_cp_metric()
+    else:
+        cp = ThurstonCPMetric.from_triangle_mesh(mesh)
+    cp.update()
+    unif_cp = cp.ricci_flow(target_K=K, dt=args.learning_rate, use_hess=args.use_hess)
+
+    edgedata = numpy.array( [[i,j,l] for (i,j), l in unif_cp._l.items()] )
+    numpy.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')
+#    print("final K:", [unif_cp.curvature(i) for i in mesh.verts])
+    sns.violinplot(y=[unif_cp.curvature(i) for i in mesh.verts], cut=0)
+    plt.savefig(fn+"_curvature_ricci.png")
+    plt.close()
