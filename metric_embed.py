@@ -64,7 +64,6 @@ parser.add_argument('--gtol', '-gt', type=float, default=1e-8, help="stopping cr
 parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
 parser.add_argument('--strict_boundary', '-sbd', action='store_true',help='strict boundary constraint')
 parser.add_argument('--fixed_beta', '-fb', action='store_true',help='fix beta (distance scaling) as well')
-parser.add_argument('--target_curvature_scalar', '-Ks', default=0.01, type=float, help='target gaussian curvature value')
 args = parser.parse_args()
 
 os.makedirs(args.outdir,exist_ok=True)

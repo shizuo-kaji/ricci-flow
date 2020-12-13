@@ -19,9 +19,14 @@ written by S. Kaji
 
 reads mesh from torus.obj and deform its metric (edge length) by Ricci flow on Thurston's Circle Packing metric.
 
-    python ricci_flow.py -i torus.obj -m unified -uh
+    python ricci_flow.py -i torus.obj -m inversive -uh
 
 uses the inversive Circle Packing metric.
+
+    python ricci_flow.py -i torus.obj -m combinatorial -uh
+
+ignores the initial geometry and construct a circle packing purely combinatorially from the mesh.
+
 
 The output result/torus_edge.csv contains edge length per line:
 
@@ -30,7 +35,7 @@ The output result/torus_edge.csv contains edge length per line:
 The PLY file result/torus.ply is same as the (non-deformed) original mesh. 
 These two files are then passed to 
 
-    python metric_embed.py result/torus.ply -lv 0 -fb
+    python metric_embed.py result/torus.ply -lv 0 -fb --gtol 1e-6
 
 to obtain the final deformed mesh result/torus_final.ply.
 
