@@ -101,7 +101,6 @@ else:  # old style input data format
     fixed_coords = vert_init[args.fixed_vert]
     edgelen = dmat[inedge[:,0],inedge[:,1]]
     np.savetxt(fn+"_edge.csv", np.hstack([inedge,edgelen[:,np.newaxis]]),delimiter=",")
-    np.savetxt(fn+"_boundary.csv", np.hstack([args.fixed_vert[:,np.newaxis],fixed_coords]),delimiter=",")
 
 print("\nvertices {}, faces {}, fixed vertices {}".format(len(vert),len(face),len(args.fixed_vert)))
 
@@ -149,9 +148,11 @@ print("beta: {}, boundary squared error: {}".format(beta, (np.sum( (fixed_coords
 
 # output
 bfn = os.path.basename(fn)
-np.savetxt(os.path.join(args.outdir,bfn)+"_edge_scaled.csv",np.hstack([inedge,np.sqrt(beta*edgelen2[:,np.newaxis])]),delimiter=",",fmt="%i,%i,%f")
-np.savetxt(os.path.join(args.outdir,bfn)+"_final.txt",vert2)
-save_ply(vert2,face,os.path.join(args.outdir,bfn+"_final.ply"))
+bfn = os.path.join(args.outdir,bfn)
+np.savetxt(bfn+"_edge_scaled.csv",np.hstack([inedge,np.sqrt(beta*edgelen2[:,np.newaxis])]),delimiter=",",fmt="%i,%i,%f")
+np.savetxt(bfn+"_boundary.csv", np.hstack([args.fixed_vert[:,np.newaxis],fixed_coords]),delimiter=",")
+np.savetxt(bfn+"_final.txt",vert2)
+save_ply(vert2,face,bfn+"_final.ply")
 
 mesh = createMesh(vert2,[frozenset(x) for x in face])
 g = DiscreteRiemannianMetric(mesh, mesh.lengths)
