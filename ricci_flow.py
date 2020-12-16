@@ -217,7 +217,6 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
 
         self._gamma = radius_map
         self.u = self.conf_factor(radius_map)
-        self.u = self.u - sum(self.u)/self._n
         self._l = dict()
 
         self._theta = dict()
@@ -393,7 +392,6 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         self._eta = struct_coeff
         self._eps = scheme_coeff
         self.u = self.conf_factor(radius_map)
-        self.u = self.u - sum(self.u)/self._n
         self._gamma = radius_map
         self._theta = dict()
         self._l = sparse.dok_matrix((self._n, self._n))
