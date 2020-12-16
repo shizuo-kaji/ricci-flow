@@ -57,6 +57,7 @@ parser = argparse.ArgumentParser(description='embedding of metric graphs')
 parser.add_argument('input', help='Path to an input ply file')
 parser.add_argument('--edge_length', '-el', default=None, help='Path to a csv specifying edge length')
 parser.add_argument('--boundary_vertex', '-bv', default=None, help='Path to a csv specifying boundary position')
+parser.add_argument('--inner_edge', '-ie', default=None, help='indices of inner edges')
 parser.add_argument('--method', '-m', default='trf',help='method for optimisation')
 parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
 parser.add_argument('--lambda_bdvert', '-lv', type=float, default=1e-2, help="weight for boundary constraint")
@@ -80,8 +81,14 @@ if (ext==".ply"):
     vert = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
     face = plydata['face']['vertex_indices']
     edgedat = np.loadtxt(args.edge_length,delimiter=",")
-    inedge = edgedat[:,:2].astype(np.uint32)
-    edgelen = edgedat[:,2]
+    if args.inner_edge:
+        index_shift=1
+        inedge = np.loadtxt(args.inner_edge).astype(np.uint16) -index_shift
+        edgedict = {(i,j): l for i,j,l in zip(edgedat[:,0],edgedat[:,1],edgedat[:,2])}
+        edgelen = np.array([edgedict[(e[0],e[1])] for e in inedge])
+    else:
+        inedge = edgedat[:,:2].astype(np.uint32)
+        edgelen = edgedat[:,2]
     if args.boundary_vertex:
         bddat = np.loadtxt(args.boundary_vertex,delimiter=",")
         args.fixed_vert = bddat[:,0].astype(np.uint32)

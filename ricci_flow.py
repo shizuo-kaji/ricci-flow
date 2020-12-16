@@ -93,6 +93,7 @@ class TriangleMesh(object):
     def __init__(self, verts, b_verts, edges, faces, lengths, bg_geom="euclidean"):
         self.verts = verts
         self.b_verts = b_verts
+        self.free_verts = list(set(verts)-set(b_verts))
         self.edges = edges
         self.faces = faces
         self.bg_geom = bg_geom
@@ -216,6 +217,7 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
 
         self._gamma = radius_map
         self.u = self.conf_factor(radius_map)
+        self.u = self.u - sum(self.u)/self._n
         self._l = dict()
 
         self._theta = dict()
@@ -280,14 +282,7 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
 
         return ret
 
-    def _constant_curvature_goal(self):
-        return (2*self._mesh.chi()*numpy.pi)/self._n
-
-    def ricci_flow(self, target_K=None, dt=0.05, thresh=1e-4, use_hess=False):
-        if target_K is None:
-            # Constant curvature
-            target_K = self._constant_curvature_goal()
-
+    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False):
         g = ThurstonCPMetric(self._mesh, self._gamma, self._phi)
         DeltaK = target_K - g._K
         niter = 0
@@ -303,14 +298,14 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
                 if niter % 10 == 0:
                     print("niter:", niter, " Max in \DeltaK:", numpy.abs(DeltaK).max())
         else:
-            while DeltaK.max() > thresh:
+            while numpy.max(numpy.abs(DeltaK)) > thresh:
                 g.u += dt*(DeltaK)
                 g.u = g.u - sum(g.u)/g._n
                 g.update()
                 DeltaK = target_K - g._K
                 niter += 1
                 if niter % 10 == 0:
-                    print("niter:", niter, " Max in \DeltaK:", DeltaK.max())
+                    print("niter:", niter, " Max in \DeltaK:", numpy.abs(DeltaK).max())
 
         return g
 
@@ -398,6 +393,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         self._eta = struct_coeff
         self._eps = scheme_coeff
         self.u = self.conf_factor(radius_map)
+        self.u = self.u - sum(self.u)/self._n
         self._gamma = radius_map
         self._theta = dict()
         self._l = sparse.dok_matrix((self._n, self._n))
@@ -508,15 +504,11 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                               self._eps[j] * numpy.exp(2 * self.u[j]))
 
 
-    def ricci_flow(self, target_K=None, dt=0.05, thresh=1e-4, use_hess=False):
-        if target_K is None:
-            # Constant curvature
-            target_K = self._constant_curvature_goal()
-
+    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False):
         niter = 0
         DeltaK = self.curvature_array() - target_K
 
-        while DeltaK.max() > thresh:
+        while numpy.abs(DeltaK).max() > thresh:
             if use_hess:
                 H = self.hessian()
                 deltau = sparse.linalg.lsqr(H, DeltaK)[0]
@@ -527,7 +519,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
 
             DeltaK = self.curvature_array() - target_K
             if niter % 10 == 0:
-                print("niter:", niter, " Max in \DeltaK: %s"%DeltaK.max())
+                print("niter:", niter, " Max in \DeltaK: %s"%numpy.abs(DeltaK).max())
             niter += 1
         return self
     
@@ -535,8 +527,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='find metric with a desired curvature by Ricci flow')
     parser.add_argument('--input', '-i', default="torus.obj", help='Path to an input ply file')
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-2, help='learning rate')
-    parser.add_argument('--gtol', '-gt', type=float, default=1e-4, help='stopping criteria for gradient')
-    parser.add_argument('--method', '-m', default='unified',choices=['inversive','thurston','combinatorial'], help='method for Ricci flow')
+    parser.add_argument('--gtol', '-gt', type=float, default=1e-6, help='stopping criteria for gradient')
+    parser.add_argument('--method', '-m', default='thurston',choices=['inversive','thurston','combinatorial'], help='method for Ricci flow')
     parser.add_argument('--radius_scheme', '-r', default=0, help='scheme for determining radius of Thurston circle packing')
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
@@ -561,13 +553,15 @@ if __name__ == "__main__":
     if args.target_curvature_scalar > 10:
         K = 2*mesh.chi()*numpy.pi/len(v)
     else:
-        K = args.target_curvature_scalar
+        K = numpy.zeros(len(v))
+        K[mesh.free_verts] = args.target_curvature_scalar
+        K[mesh.b_verts] = (2*mesh.chi()*numpy.pi - numpy.sum(K))/len(mesh.b_verts)
 
     numpy.savetxt(fn+"_bv.txt",mesh.b_verts, fmt='%i')
-    numpy.savetxt(fn+"_cv.txt",list(set(range(len(v)))-set(mesh.b_verts)), fmt='%i')
+    numpy.savetxt(fn+"_cv.txt",mesh.free_verts,fmt='%i')
     g = DiscreteRiemannianMetric(mesh, mesh.lengths)
     print("Min vertex valence: %s" % mesh.min_valence())
-    print("Mesh chi: %s, global chi: %s, target curvature: %s" % (mesh.chi(),g.gb_chi(),K))
+    print("Mesh chi: %s, global chi: %s, target total curvature: %s" % (mesh.chi(),g.gb_chi(),K.sum()))
 
     if args.method=="inversive":
         cp = CirclePackingMetric.from_riemannian_metric(g)
@@ -581,6 +575,8 @@ if __name__ == "__main__":
     edgedata = numpy.array( [[i,j,l] for (i,j), l in unif_cp._l.items()] )
     numpy.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')
 #    print("final K:", [unif_cp.curvature(i) for i in mesh.verts])
-    sns.violinplot(y=[unif_cp.curvature(i) for i in mesh.verts], cut=0)
+    final_K = numpy.array([unif_cp.curvature(i) for i in mesh.free_verts])
+    sns.violinplot(y=final_K, cut=0)
+    print("total curvature error: ", numpy.abs(final_K-K[mesh.free_verts]).sum() )
     plt.savefig(fn+"_curvature_ricci.png")
     plt.close()
