@@ -24,7 +24,7 @@ class IdentityDictMap(object):
         return self._o
 
 def save_ply(vert,face,fname):
-    el1 = PlyElement.describe(numpy.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f4'), ('y', 'f4'),('z', 'f4')]), 'vertex')
+    el1 = PlyElement.describe(numpy.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f8'), ('y', 'f8'),('z', 'f8')]), 'vertex')
     el2 = PlyElement.describe(numpy.array([([x[0],x[1],x[2]], 0) for x in face],dtype=[('vertex_indices', 'i4', (3,)), ('red', 'u1')]), 'face')
     PlyData([el1,el2], text=True).write(fname)
 
@@ -137,9 +137,7 @@ class DiscreteRiemannianMetric(object):
                 self._theta[(i,k,j)] = theta
 
         # Set curvatures
-        self._K = numpy.zeros((self._n,))
-        for vert in self._mesh.verts:
-            self._K[vert] = self.curvature(vert)
+        self._K = self.curvature_array()
 
     def is_ok(self): ## check triangle inequality
         for face in self._mesh.faces:
@@ -188,6 +186,12 @@ class DiscreteRiemannianMetric(object):
             return numpy.pi - sum([self.angle(face, vert) for face in faces])
         else:
             return 2*numpy.pi - sum([self.angle(face, vert) for face in faces])
+
+    def curvature_array(self):
+        K = numpy.zeros(len(self._mesh.verts))
+        for v_i in self._mesh.verts:
+            K[v_i] = self.curvature(v_i)
+        return K
 
     def total_curvature(self):
         return sum([self.curvature(vert) for vert in self._mesh.verts])
@@ -468,12 +472,6 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
 
         super(CirclePackingMetric, self).update()
 
-    def curvature_array(self):
-        K = numpy.zeros(len(self._mesh.verts))
-        for v_i in self._mesh.verts:
-            K[v_i] = self.curvature(v_i)
-        return K
-
     def hessian(self):
         n = len(self._mesh.verts)
         H = sparse.dok_matrix((n,n))
@@ -531,7 +529,8 @@ if __name__ == "__main__":
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
     parser.add_argument('--use_hess', '-uh', action='store_true',help='use hessian')
-    parser.add_argument('--target_curvature_scalar', '-Ks', default=99, type=float, help='target gaussian curvature value')
+    parser.add_argument('--target_curvature_scalar', '-Ks', default=10, type=float, help='target gaussian curvature value (if >2pi, uniform curvature for internal vertices while fixing initial curvature for boundary vertices)')
+    parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
     args = parser.parse_args()
 
     os.makedirs(args.outdir,exist_ok=True)
@@ -548,18 +547,29 @@ if __name__ == "__main__":
         f = [frozenset(x) for x in plydata['face']['vertex_indices']]
 
     mesh = createMesh(v,f)
-    if args.target_curvature_scalar > 10:
-        K = 2*mesh.chi()*numpy.pi/len(v)
+    g = DiscreteRiemannianMetric(mesh, mesh.lengths)
+    
+    # set target curvature
+    if args.target_curvature:
+        K = numpy.loadtxt(args.target_curvature)
     else:
-        K = numpy.zeros(len(v))
-        K[mesh.free_verts] = args.target_curvature_scalar
-        K[mesh.b_verts] = (2*mesh.chi()*numpy.pi - numpy.sum(K))/len(mesh.b_verts)
+        if args.target_curvature_scalar > 50: # uniform
+            K = numpy.full(len(v),2*mesh.chi()*numpy.pi/len(v))
+            print("uniform target curvature: ",K[mesh.free_verts[0]])
+        elif args.target_curvature_scalar > 2*numpy.pi: # fix boundary
+            K = numpy.zeros(len(v))
+            K[mesh.b_verts] = g._K[mesh.b_verts]
+            K[mesh.free_verts] = (2*mesh.chi()*numpy.pi - numpy.sum(K))/len(mesh.free_verts)
+            print("uniform target curvature fixing boundary: ",K[mesh.free_verts[0]])
+        else:
+            K = numpy.zeros(len(v))
+            K[mesh.free_verts] = args.target_curvature_scalar
+            K[mesh.b_verts] = (2*mesh.chi()*numpy.pi - numpy.sum(K))/len(mesh.b_verts)
 
     numpy.savetxt(fn+"_bv.txt",mesh.b_verts, fmt='%i')
     numpy.savetxt(fn+"_cv.txt",mesh.free_verts,fmt='%i')
-    g = DiscreteRiemannianMetric(mesh, mesh.lengths)
     print("Min vertex valence: %s" % mesh.min_valence())
-    print("Mesh chi: %s, global chi: %s, target total curvature: %s" % (mesh.chi(),g.gb_chi(),K.sum()))
+    print("Mesh chi: %s, global chi: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K.sum()/numpy.pi))
 
     if args.method=="inversive":
         cp = CirclePackingMetric.from_riemannian_metric(g)
@@ -572,9 +582,7 @@ if __name__ == "__main__":
 
     edgedata = numpy.array( [[i,j,l] for (i,j), l in unif_cp._l.items()] )
     numpy.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')
-#    print("final K:", [unif_cp.curvature(i) for i in mesh.verts])
-    final_K = numpy.array([unif_cp.curvature(i) for i in mesh.free_verts])
-    sns.violinplot(y=final_K, cut=0)
-    print("total curvature error: ", numpy.abs(final_K-K[mesh.free_verts]).sum() )
+    sns.violinplot(y=unif_cp._K[mesh.free_verts], cut=0)
+    print("total curvature error: ", numpy.abs(unif_cp._K[mesh.free_verts]-K[mesh.free_verts]).sum() )
     plt.savefig(fn+"_curvature_ricci.png")
     plt.close()

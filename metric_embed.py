@@ -9,7 +9,7 @@ from plyfile import PlyData, PlyElement
 from ricci_flow import DiscreteRiemannianMetric, createMesh
 
 def save_ply(vert,face,fname):
-    el1 = PlyElement.describe(np.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f4'), ('y', 'f4'),('z', 'f4')]), 'vertex')
+    el1 = PlyElement.describe(np.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f8'), ('y', 'f8'),('z', 'f8')]), 'vertex')
     el2 = PlyElement.describe(np.array([([x[0],x[1],x[2]], 0) for x in face],dtype=[('vertex_indices', 'i4', (3,)), ('red', 'u1')]), 'face')
     PlyData([el1,el2], text=True).write(fname)
 
