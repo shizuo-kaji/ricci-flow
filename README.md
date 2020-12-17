@@ -15,15 +15,15 @@ written by S. Kaji
 
 # How to use
 
-    python ricci_flow.py -i torus.obj -m thurston -uh
+    python ricci_flow.py torus.obj -m inversive -uh
 
-reads mesh from torus.obj and deform its metric (edge length) by Ricci flow on Thurston's Circle Packing metric.
+reads mesh from torus.obj and deform its metric (edge length) by Ricci flow on inversive Circle Packing metric.
 
-    python ricci_flow.py -i torus.obj -m inversive -uh
+    python ricci_flow.py torus.obj -m thurston -uh
 
-uses the inversive Circle Packing metric.
+uses the Thurston's Circle Packing metric.
 
-    python ricci_flow.py -i torus.obj -m combinatorial -uh
+    python ricci_flow.py torus.obj -m combinatorial -uh
 
 ignores the initial geometry and construct a circle packing purely combinatorially from the mesh.
 
