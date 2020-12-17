@@ -285,32 +285,29 @@ class ThurstonCPMetric(DiscreteRiemannianMetric):
 
         return ret
 
-    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False):
-        g = ThurstonCPMetric(self._mesh, self._gamma, self._phi)
-        DeltaK = target_K - g._K
+    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False, leave_boundary=False):
+        DeltaK = self._K - target_K
         niter = 0
-        if use_hess:
-            while numpy.max(numpy.abs(DeltaK)) > thresh:
+        while (numpy.abs(DeltaK).max() > thresh and leave_boundary==False) or (numpy.abs(DeltaK[self._mesh.free_verts]).max() > thresh and leave_boundary==True):
+            if use_hess:
                 H = self.hessian()
-                deltau = sparse.linalg.lsqr(H, DeltaK)[0]
-                g.u -= dt*deltau
-                g.u = g.u - sum(g.u)/g._n
-                g.update()
-                DeltaK = target_K - g._K
-                niter += 1
-                if niter % 10 == 0:
-                    print("niter:", niter, " Max in \DeltaK:", numpy.abs(DeltaK).max())
-        else:
-            while numpy.max(numpy.abs(DeltaK)) > thresh:
-                g.u += dt*(DeltaK)
-                g.u = g.u - sum(g.u)/g._n
-                g.update()
-                DeltaK = target_K - g._K
-                niter += 1
-                if niter % 10 == 0:
-                    print("niter:", niter, " Max in \DeltaK:", numpy.abs(DeltaK).max())
-
-        return g
+                deltau = sparse.linalself.lsqr(H, DeltaK)[0]
+                self.u += dt*deltau
+            else:
+                if leave_boundary:
+                    self.u[self._mesh.free_verts] -= dt*DeltaK[self._mesh.free_verts]
+                else:
+                    self.u -= dt*(DeltaK)
+            self.u = self.u - sum(self.u)/self._n
+            self.update()
+            DeltaK = self._K - target_K
+            if niter % 10 == 0:
+                if leave_boundary:
+                    print("niter:", niter, " Max in \DeltaK: %s"%numpy.abs(DeltaK[self._mesh.free_verts]).max())
+                else:
+                    print("niter:", niter, " Max in \DeltaK: %s"%numpy.abs(DeltaK).max())
+            niter += 1
+        return self
 
     def conf_factor(self, gamma):
         return numpy.log(gamma)
@@ -458,12 +455,8 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
     def conf_factor(self, gamma):
         return numpy.log(gamma)
 
-    def update_with_u(self, u):
-        self.u = u
-        self._gamma = numpy.exp(u)
-        self.update()
-
     def update(self):
+        self.gamma = numpy.exp(self.u)
         for edge in self._mesh.edges:
             i,j = edge
             l = self.compute_length(edge)
@@ -500,22 +493,27 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                               self._eps[j] * numpy.exp(2 * self.u[j]))
 
 
-    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False):
-        niter = 0
+    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False, leave_boundary=False):
         DeltaK = self.curvature_array() - target_K
-
-        while numpy.abs(DeltaK).max() > thresh:
+        niter = 0
+        while (numpy.abs(DeltaK).max() > thresh and leave_boundary==False) or (numpy.abs(DeltaK[self._mesh.free_verts]).max() > thresh and leave_boundary==True):
             if use_hess:
                 H = self.hessian()
                 deltau = sparse.linalg.lsqr(H, DeltaK)[0]
-                self.update_with_u( self.u + dt*deltau )
+                self.u += dt*deltau
             else:
-                # Gradient Descent
-                self.update_with_u( self.u - dt*DeltaK )
-
+                if leave_boundary:
+                    self.u[self._mesh.free_verts] -= dt*DeltaK[self._mesh.free_verts]
+                else:
+                    self.u -= dt*DeltaK
+            self.u = self.u - sum(self.u)/self._n
+            self.update()
             DeltaK = self.curvature_array() - target_K
             if niter % 10 == 0:
-                print("niter:", niter, " Max in \DeltaK: %s"%numpy.abs(DeltaK).max())
+                if leave_boundary:
+                    print("niter:", niter, " Max in \DeltaK: %s"%numpy.abs(DeltaK[self._mesh.free_verts]).max())
+                else:
+                    print("niter:", niter, " Max in \DeltaK: %s"%numpy.abs(DeltaK).max())
             niter += 1
         return self
     
@@ -529,6 +527,7 @@ if __name__ == "__main__":
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
     parser.add_argument('--use_hess', '-uh', action='store_true',help='use hessian')
+    parser.add_argument('--leave_boundary', '-lb', action='store_true',help='do not touch boundary')
     parser.add_argument('--target_curvature_scalar', '-Ks', default=10, type=float, help='target gaussian curvature value (if >2pi, uniform curvature for internal vertices while fixing initial curvature for boundary vertices)')
     parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
     args = parser.parse_args()
@@ -569,13 +568,16 @@ if __name__ == "__main__":
             print("uniform target curvature with fixing boundary: ",K[mesh.free_verts[0]])
         else: # specified curvature in interior (uniform on boundary)
             K[mesh.free_verts] = args.target_curvature_scalar
-            K[mesh.b_verts] = (2*mesh.chi()*numpy.pi - numpy.sum(K))/len(mesh.b_verts)
+            if args.leave_boundary:
+                K[mesh.b_verts] = g._K[mesh.b_verts]
+            else:
+                K[mesh.b_verts] = (2*mesh.chi()*numpy.pi - numpy.sum(K))/len(mesh.b_verts)
 
     numpy.savetxt(fn+"_bv.txt",mesh.b_verts, fmt='%i')
     numpy.savetxt(fn+"_cv.txt",mesh.free_verts,fmt='%i')
     numpy.savetxt(fn+"_target_K.txt", K)
-    print("Min vertex valence: %s" % mesh.min_valence())
-    print("Mesh chi: %s, global chi: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K.sum()/numpy.pi))
+    print("#V: %s, #E: %s, #F: %s, Min vertex valence: %s" % (len(mesh.verts),len(mesh.edges),len(mesh.faces), mesh.min_valence()))
+    print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/numpy.pi))
 
     if args.method=="inversive":
         cp = CirclePackingMetric.from_riemannian_metric(g)
@@ -584,7 +586,7 @@ if __name__ == "__main__":
     else:
         cp = ThurstonCPMetric.from_triangle_mesh(mesh)
     cp.update()
-    unif_cp = cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=args.use_hess)
+    unif_cp = cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=args.use_hess, leave_boundary=args.leave_boundary)
 
     edgedata = numpy.array( [[i,j,l] for (i,j), l in unif_cp._l.items()] )
     numpy.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')

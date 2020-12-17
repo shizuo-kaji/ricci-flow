@@ -157,7 +157,7 @@ print("beta: {}, boundary squared error: {}".format(beta, (np.sum( (fixed_coords
 bfn = os.path.basename(fn)
 bfn = os.path.join(args.outdir,bfn)
 np.savetxt(bfn+"_edge_scaled.csv",np.hstack([inedge,np.sqrt(beta*edgelen2[:,np.newaxis])]),delimiter=",",fmt="%i,%i,%f")
-np.savetxt(bfn+"_boundary.csv", np.hstack([args.fixed_vert[:,np.newaxis],fixed_coords]),delimiter=",")
+#np.savetxt(bfn+"_boundary.csv", np.hstack([args.fixed_vert[:,np.newaxis],fixed_coords]),delimiter=",")
 np.savetxt(bfn+"_final.txt",vert2)
 save_ply(vert2,face,bfn+"_final.ply")
 
