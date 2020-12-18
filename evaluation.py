@@ -16,7 +16,7 @@ parser.add_argument('--edge_length', '-el', default=None, help='Path to a csv sp
 parser.add_argument('--index_shift', type=int, default=1, help="vertex indices start at")
 parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
 parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file specifying target gaussian curvature')
-parser.add_argument('--target_curvature_scalar', '-Ks', default=0.01, type=float, help='target gaussian curvature value')
+parser.add_argument('--target_curvature_scalar', '-Ks', default=0.01181102, type=float, help='target gaussian curvature value')
 args = parser.parse_args()
 
 os.makedirs(args.outdir,exist_ok=True)
@@ -105,7 +105,7 @@ if args.initial_mesh is not None:
 
 
 # %%
-np.savetxt(os.path.join(args.outdir,"curvature.txt"),np.vstack([targetK[constrained_vert], g_dmat._K[constrained_vert], g_final._K[constrained_vert]]).T,fmt='%1.5f')
+np.savetxt(os.path.join(args.outdir,"curvature.txt"),np.vstack([targetK[constrained_vert], g_dmat._K[constrained_vert], g_final._K[constrained_vert]]).T,fmt='%1.8f')
 
 K_error = np.abs(g_final._K[constrained_vert]-targetK[constrained_vert])
 bd_error = ( (fixed_coords-vert[fixed_vert])**2 )
