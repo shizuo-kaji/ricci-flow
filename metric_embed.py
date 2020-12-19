@@ -57,7 +57,9 @@ fn = os.path.join(pn,os.path.basename(fn).rsplit('_', 1)[0])
 if args.edge_length is None:
     args.edge_length =fn+"_edge.csv"
 if args.boundary_vertex is None and args.lambda_bdvert>0:
-    args.boundary_vertex =fn+"_boundary.csv"
+    cfn = fn+"_boundary.csv"
+    if os.path.isfile(cfn):
+        args.boundary_vertex = cfn
 
 #   
 plydata = PlyData.read(args.input)
@@ -81,6 +83,7 @@ if args.boundary_vertex:
     args.fixed_vert = bddat[:,0].astype(np.uint32)
     fixed_coords = bddat[:,1:]
 else:
+    args.lambda_bdvert = 0
     args.fixed_vert =np.array([0])
     fixed_coords = vert[args.fixed_vert]
 

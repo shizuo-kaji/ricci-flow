@@ -242,170 +242,77 @@ class DiscreteRiemannianMetric(object):
          ))
 
 
-class ThurstonCPMetric(DiscreteRiemannianMetric):
-    def __init__(self, mesh, radius_map, edge_weights):
-        self._n = len(mesh.verts)
-        self._mesh = mesh
-        self._l = dict()
-
-        self._gamma = radius_map
-        self.u = self.conf_factor(radius_map)
-
-        self._theta = dict()
-        self._phi = edge_weights
-        self.update()
-
-    @classmethod
-    def from_triangle_mesh(cls, mesh):
-        """Create a new Thurston's CP Metric using a triangle mesh
-        without metric (i.e. length) data"""
-        n = len(mesh.verts)
-        gamma = np.array([1 for v in mesh.verts])
-        phi = sparse.dok_matrix((n,n))
-        for edge in mesh.edges:
-            i,j = edge
-            phi[i,j] = 0
-            phi[j,i] = 0
-
-        return cls(mesh, gamma, phi)
-
-    @classmethod
-    def from_riemannian_metric(cls, g, radius_scheme=0):
-        pre_gamma = [[] for _ in g._mesh.verts]
-        mesh = g._mesh
-        n = len(mesh.verts)
-        if radius_scheme == 0:
-            for face in mesh.faces:
-                for i, opp_edge in partition_face(face):
-                    j,k = opp_edge
-                    pre_gamma[i].append(.5*(g.length((k,i)) + g.length((i,j)) - g.length((j,k))))
-            gamma = np.array([(1.0/len(g_ijk))*sum(g_ijk) for g_ijk in pre_gamma])
-        else:
-            gamma = np.array(
-                [(2.5/3.0)*min(g.length(edge) for edge in mesh.adjacent_edges(vert)) for vert in mesh.verts])
-
-        # make circles intersect
-        alpha = 1.0
-        for i,j in mesh.edges:
-            alpha = max( 1.1*(g.length((i,j))/(gamma[i]+gamma[j])), alpha)
-        gamma *= alpha
-        for i,j in mesh.edges:
-            assert gamma[i]+gamma[j] >= g.length((i,j))
-
-        phi = sparse.dok_matrix((n, n))
-        for i,j in mesh.edges:
-            g_i,g_j,l_ij = gamma[i], gamma[j], g.length((i,j))
-            eta = .5*(l_ij**2 - g_i**2 - g_j**2)/(g_i*g_j)
-            eta = min(1, eta)
-            phi_ij = np.arccos(eta)
-            phi_ij = min(np.pi/2, phi_ij)
-            phi[i,j] = phi_ij
-            phi[j,i] = phi_ij
-
-        ret = cls(mesh, gamma, phi)
-
-        # This new metric should approximate the old
-        #for i,j in mesh.edges:
-        #    assert abs(g.length((i,j))-ret._l[(i,j)])<1e-3
-
-        return ret
-
-    def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False, leave_boundary=False):
-        DeltaK = self._K - target_K
-        niter = 0
-        while (np.abs(DeltaK).sum() > thresh and leave_boundary==False) or (np.abs(DeltaK[self._mesh.free_verts]).sum() > thresh and leave_boundary==True):
-            if use_hess:
-                if leave_boundary:
-                    print("use_hess and leave_boundary together are not implemented!")
-                    exit()
-                H = self.hessian()
-                deltau = sparse.linalg.lsqr(H, DeltaK)[0]
-                self.u += dt*deltau
-            else:
-                if leave_boundary:
-                    self.u[self._mesh.free_verts] -= dt*DeltaK[self._mesh.free_verts]
-                else:
-                    self.u -= dt*(DeltaK)
-            self.u = self.u - sum(self.u)/self._n
-            self.update()
-            DeltaK = self._K - target_K
-            if niter % 10 == 0:
-                if leave_boundary:
-                    print("niter:", niter, " |DeltaK|_1: %s"%np.abs(DeltaK[self._mesh.free_verts]).sum())
-                else:
-                    print("niter:", niter, " |DeltaK|_1: %s"%np.abs(DeltaK).sum())
-            niter += 1
-        return self
-
-    def update(self):
-        self._gamma = np.exp(self.u)
-        for edge in self._mesh.edges:
-            i,j = edge
-            l = self.compute_length(edge)
-            self._l[i,j] = l
-            self._l[j,i] = l
-        super(ThurstonCPMetric, self).update()
-
-    def compute_length(self, edge):
-        i,j = list(edge)
-        g_i, g_j = self._gamma[[i,j]]
-        return np.sqrt(2*g_i*g_j*np.cos(self._phi[i,j]) + g_i**2 + g_j**2)
-
-    def _tau2(self, i,j,k):
-        return .5*(self._l[j,k]**2 + self._gamma[j]**2 - self._gamma[k]**2)
-
-    def hessian(self):
-        n = len(self._mesh.verts)
-        H = dict()#sparse.dok_matrix((n,n))
-        for face in self._mesh.faces:
-            i,j,k = face
-            A = self.face_area(face)
-            L = np.diag((self._l[j,k],self._l[i,k],self._l[i,j]))
-            D = self._D(self._tau2,i,j,k)
-            Theta = self._Theta(face)
-
-            Tijk = -.5/A * (L.dot(Theta).dot(inv(L)).dot(D))
-            for a,row in zip((i,j,k), Tijk):
-                for b,dtheta in zip((i,j,k), row):
-                    if (a,b) in H:
-                        H[a,b] += dtheta
-                    else:
-                        H[a,b] = dtheta
-        Hm = sparse.dok_matrix((n,n))
-        for (du_i,dtheta_j), val in H.items():
-            Hm[du_i, dtheta_j] = val
-        return Hm.tocsr()
-
 class CirclePackingMetric(DiscreteRiemannianMetric):
     def __init__(self, mesh, radius_map, struct_coeff, scheme_coeff):
         self._n = len(mesh.verts)
         self._mesh = mesh
-        self._eta = struct_coeff
+        self._eta = struct_coeff   # np.cos(self._phi)
         self._eps = scheme_coeff
         self.u = self.conf_factor(radius_map)
         self._gamma = radius_map
+        self.u = self.conf_factor(radius_map)
         self._theta = dict()
         self._l = dict()
         self.update()
 
     @classmethod
     def from_riemannian_metric(cls, g, scheme="inversive"):
-        gamma = np.zeros((g._n,))
         eta = sparse.lil_matrix((g._n, g._n))
+        # initial radius
+        if scheme=="inversive":
+            gamma = np.zeros((g._n,))
+            for vert in g._mesh.verts:
+                gamma[vert] = (1.0/3)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert))
+        elif scheme=="thurston":
+            pre_gamma = [[] for _ in g._mesh.verts]
+            mesh = g._mesh
+            n = len(mesh.verts)
+            for face in mesh.faces:
+                for i, opp_edge in partition_face(face):
+                    j,k = opp_edge
+                    pre_gamma[i].append(.5*(g.length((k,i)) + g.length((i,j)) - g.length((j,k))))
+            gamma = np.array([(1.0/len(g_ijk))*sum(g_ijk) for g_ijk in pre_gamma])
+            # make circles intersect
+            alpha = 1.0
+            for i,j in mesh.edges:
+                alpha = max( 1.1*(g.length((i,j))/(gamma[i]+gamma[j])), alpha)
+            gamma *= alpha
+            for i,j in mesh.edges:
+                assert gamma[i]+gamma[j] >= g.length((i,j))
+        elif scheme=="thurston2":
+            gamma = np.array(
+                [(2.5/3.0)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert)) for vert in g._mesh.verts])
 
-        for vert in g._mesh.verts:
-            gamma[vert] = (1.0/3)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert))
-        for edge in g._mesh.edges:
-            i,j = edge
-            struct_c = ((g.length(edge)**2 - gamma[i]**2 - gamma[j]**2) / (2*gamma[i]*gamma[j]))
-            eta[i,j] = struct_c
-            eta[j,i] = struct_c
-        return cls(g._mesh, gamma, eta, IdentityDictMap())
+        # edge weight
+        if scheme=="combinatorial":
+            gamma = np.ones(g._n)
+            for edge in g._mesh.edges:
+                i,j = edge
+                eta[i,j] = 1
+                eta[j,i] = 1
+        else:
+            for edge in g._mesh.edges:
+                i,j = edge
+                struct_c = ((g.length(edge)**2 - gamma[i]**2 - gamma[j]**2) / (2*gamma[i]*gamma[j]))
+                eta[i,j] = struct_c
+                eta[j,i] = struct_c
+
+        ret = cls(g._mesh, gamma, eta, IdentityDictMap())
+
+        # This new metric should approximate the old
+        #for i,j in mesh.edges:
+        #    assert abs(g.length((i,j))-ret._l[(i,j)])<1e-3
+        return ret
 
     def _tau(self, i,j,k):
         return .5*(self._l[j,k]**2 +
-                    self._eps[j] * (self._gamma[j]**2) +
+                    self._eps[j] * (self._gamma[j]**2) - 
                     self._eps[k] * (self._gamma[k]**2))
+
+    def compute_length(self, edge):
+        i,j = list(edge)
+        g_i, g_j = self._gamma[[i,j]]
+        return np.sqrt(2*g_i*g_j*self._eta[i,j] + self._eps[i] * g_i**2 + self._eps[j] * g_j**2)
 
     def update(self):
         self._gamma = np.exp(self.u)
@@ -442,13 +349,8 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         #         H[a,b] += dtheta
         # return H
 
-    def compute_length(self, edge):
-        i,j = list(edge)
-        g_i, g_j = self._gamma[[i,j]]
-        return np.sqrt(2*g_i*g_j*self._eta[i,j] + self._eps[i] * g_i**2 + self._eps[j] * g_j**2)
-
     def ricci_flow(self, target_K=0, dt=0.05, thresh=1e-4, use_hess=False, leave_boundary=False):
-        DeltaK = self.curvature_array() - target_K
+        DeltaK = self._K - target_K
         niter = 0
         while (np.abs(DeltaK).sum() > thresh and leave_boundary==False) or (np.abs(DeltaK[self._mesh.free_verts]).sum() > thresh and leave_boundary==True):
             if use_hess:
@@ -465,7 +367,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                     self.u -= dt*DeltaK
             self.u = self.u - sum(self.u)/self._n
             self.update()
-            DeltaK = self.curvature_array() - target_K
+            DeltaK = self._K - target_K
             if niter % 10 == 0:
                 if leave_boundary:
                     print("niter:", niter, " |DeltaK|_1 %s"%np.abs(DeltaK[self._mesh.free_verts]).sum())
@@ -479,7 +381,7 @@ if __name__ == "__main__":
     parser.add_argument('input', help='Path to an input ply file')
     parser.add_argument('--learning_rate', '-lr', type=float, default=0.1, help='learning rate')
     parser.add_argument('--gtol', '-gt', type=float, default=1e-6, help='stopping criteria for gradient')
-    parser.add_argument('--method', '-m', default='thurston',choices=['inversive','thurston','combinatorial'], help='method for Ricci flow')
+    parser.add_argument('--method', '-m', default='thurston',choices=['inversive','thurston','thurston2','combinatorial'], help='method for Ricci flow')
     parser.add_argument('--radius_scheme', '-r', default=0, help='scheme for determining radius of Thurston circle packing')
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
@@ -538,13 +440,8 @@ if __name__ == "__main__":
     print("#V: %s, #E: %s, #F: %s, Min vertex valence: %s" % (len(mesh.verts),len(mesh.edges),len(mesh.faces), mesh.min_valence()))
     print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/np.pi))
 
-
-    if args.method=="inversive":
-        cp = CirclePackingMetric.from_riemannian_metric(g)
-    elif args.method=="thurston":
-        cp = ThurstonCPMetric.from_riemannian_metric(g, radius_scheme=args.radius_scheme)
-    else:
-        cp = ThurstonCPMetric.from_triangle_mesh(mesh)
+    # ricci flow
+    cp = CirclePackingMetric.from_riemannian_metric(g, scheme=args.method)
     start = time.time()
     unif_cp = cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=args.use_hess, leave_boundary=args.leave_boundary)
     print ("{} sec".format(time.time() - start))
