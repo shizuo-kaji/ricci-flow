@@ -258,30 +258,41 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
     @classmethod
     def from_riemannian_metric(cls, g, scheme="inversive"):
         eta = sparse.lil_matrix((g._n, g._n))
+        mesh = g._mesh
         # initial radius
         if scheme=="inversive":
             gamma = np.zeros((g._n,))
-            for vert in g._mesh.verts:
-                gamma[vert] = (1.0/3)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert))
+            pre_gamma = [[] for _ in g._mesh.verts]
+            for face in mesh.faces:
+                for i, opp_edge in partition_face(face):
+                    j,k = opp_edge
+                    pre_gamma[i].append(.5*(g.length((k,i)) + g.length((i,j)) - g.length((j,k))))
+            gamma = np.array([min(g_ijk) for g_ijk in pre_gamma])
+            # for vert in g._mesh.verts:
+            #     gamma[vert] = (1.0/3)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert))
         elif scheme=="thurston":
             pre_gamma = [[] for _ in g._mesh.verts]
-            mesh = g._mesh
-            n = len(mesh.verts)
             for face in mesh.faces:
                 for i, opp_edge in partition_face(face):
                     j,k = opp_edge
                     pre_gamma[i].append(.5*(g.length((k,i)) + g.length((i,j)) - g.length((j,k))))
             gamma = np.array([(1.0/len(g_ijk))*sum(g_ijk) for g_ijk in pre_gamma])
+        elif scheme=="thurston2":
+            gamma = np.array(
+                [(2.0/3.0)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert)) for vert in g._mesh.verts])
+
+        if "thurston" in scheme:
             # make circles intersect
             alpha = 1.0
             for i,j in mesh.edges:
                 alpha = max( 1.1*(g.length((i,j))/(gamma[i]+gamma[j])), alpha)
-            gamma *= alpha
+            if alpha>1.0:
+                gamma *= alpha
+                print("alpha: ",alpha)
             for i,j in mesh.edges:
                 assert gamma[i]+gamma[j] >= g.length((i,j))
-        elif scheme=="thurston2":
-            gamma = np.array(
-                [(2.5/3.0)*min(g.length(edge) for edge in g._mesh.adjacent_edges(vert)) for vert in g._mesh.verts])
+
+
 
         # edge weight
         if scheme=="combinatorial":
@@ -294,6 +305,9 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             for edge in g._mesh.edges:
                 i,j = edge
                 struct_c = ((g.length(edge)**2 - gamma[i]**2 - gamma[j]**2) / (2*gamma[i]*gamma[j]))
+                #assert(struct_c>=0)
+                if "thurston" in scheme:
+                    struct_c = np.clip(struct_c,0,1)
                 eta[i,j] = struct_c
                 eta[j,i] = struct_c
 

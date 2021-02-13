@@ -110,7 +110,7 @@ np.savetxt(os.path.join(args.outdir,"curvature.txt"),np.vstack([targetK[constrai
 K_error = np.abs(g_final._K[constrained_vert]-targetK[constrained_vert])
 bd_error = ( (fixed_coords-vert[fixed_vert])**2 )
 l2 = np.sum( (vert[inedge[:,0]]-vert[inedge[:,1]])**2, axis=1 )
-edge_error = np.abs(l2-edgelen**2).sum()
+edge_error = np.abs(l2-edgelen**2)
 
 print("edge^2 error: {}, boundary squared error: {}".format(np.sum(edge_error),np.sum(bd_error)))
 print("curvature error (dmat-target): {}, (final-target): {}".format(np.abs(g_dmat._K[constrained_vert]-targetK[constrained_vert]).sum(), np.sum(K_error)))
@@ -141,4 +141,8 @@ plt.savefig(os.path.join(args.outdir,"error_final_vs_dmat.png"))
 plt.close()
 sns.violinplot(y=np.abs(g_final._K[constrained_vert]-targetK[constrained_vert]), cut=0)
 plt.savefig(os.path.join(args.outdir,"error_final.png"))
+plt.close()
+
+sns.violinplot(y=np.degrees(g_final.angle_array()), cut=0)
+plt.savefig(os.path.join(args.outdir,"angles_final.png"))
 plt.close()
