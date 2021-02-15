@@ -401,7 +401,8 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
     parser.add_argument('--use_hess', '-uh', action='store_true',help='use hessian')
     parser.add_argument('--leave_boundary', '-lb', action='store_true',help='do not touch boundary')
-    parser.add_argument('--target_curvature_scalar', '-Ks', default=10, type=float, help='target gaussian curvature value (if >2pi, uniform curvature for internal vertices while fixing initial curvature for boundary vertices)')
+    parser.add_argument('--target_curvature_interior', '-Ki', default=10, type=float, help='target gaussian curvature value (if >2pi, uniform curvature for internal vertices posed by the Gauss-Bonnet)')
+    parser.add_argument('--target_curvature_boundary', '-Kb', default=10, type=float, help='target gaussian curvature value on the boundary vertices (if >2pi, boundary curvature values are fixed to the ones of the initial mesh)')
     parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
     args = parser.parse_args()
 
@@ -422,32 +423,28 @@ if __name__ == "__main__":
     g = DiscreteRiemannianMetric(mesh, mesh.lengths)
     
     # set target curvature
+    K = np.full(len(v),4*np.pi)
+    K[mesh.free_verts] = args.target_curvature_interior
+    if args.target_curvature_boundary < 2*np.pi:
+        K[mesh.b_verts] = args.target_curvature_boundary
+    elif args.target_curvature_boundary < 99:
+        K[mesh.b_verts] = g._K[mesh.b_verts] 
     if args.target_curvature:
-        K = np.loadtxt(args.target_curvature)
-        mask = K>2*np.pi
-        K[mask] = (2*mesh.chi()*np.pi - np.sum(K[~mask]))/sum(mask)
-    else:
-        K = np.zeros(len(v))
-        if args.target_curvature_scalar > 50: # uniform
-            K = np.full(len(v),2*mesh.chi()*np.pi/len(v))
-            print("uniform target curvature: ",K[mesh.free_verts[0]])
-        elif args.target_curvature_scalar == 49: # concentrate at one vertex
-            vid=0
-            K[mesh.b_verts] = g._K[mesh.b_verts]
-            K[mesh.free_verts] = 0
-            K[vid] = (2*mesh.chi()*np.pi - np.sum(K))
-            print("flat with curvature concentrating at a vertex: ",K[mesh.free_verts[vid]])
-        elif args.target_curvature_scalar > 2*np.pi: # fix boundary and inferred uniform interior
-            K[mesh.b_verts] = g._K[mesh.b_verts]
-            K[mesh.free_verts] = (2*mesh.chi()*np.pi - np.sum(K))/len(mesh.free_verts)
-            print("uniform target curvature with fixing boundary: ",K[mesh.free_verts[0]])
-        else: # specified curvature in interior (uniform on boundary)
-            K[mesh.free_verts] = args.target_curvature_scalar
-            if args.leave_boundary:
-                K[mesh.b_verts] = g._K[mesh.b_verts]
-                np.savetxt(fn+"_boundary.csv", np.hstack([np.array(mesh.b_verts)[:,np.newaxis],v[mesh.b_verts]]),delimiter=",", fmt='%i,%f,%f,%f')
-            else:
-                K[mesh.b_verts] = (2*mesh.chi()*np.pi - np.sum(K))/len(mesh.b_verts)
+        tc = np.loadtxt(args.target_curvature,delimiter=",")
+        K[tc[:,0].astype(np.uint32)]=tc[:,1]
+
+    if args.target_curvature_interior >= 49: # concentrate at one vertex; demo purpose only
+        vid=0
+        K[mesh.free_verts] = 0
+        K[vid] = (2*mesh.chi()*np.pi - np.sum(K))
+        print("flat with curvature concentrating at a vertex: ",K[mesh.free_verts[vid]])
+    if args.leave_boundary:
+        # save boundary coordinates for later stage
+        np.savetxt(fn+"_boundary.csv", np.hstack([np.array(mesh.b_verts)[:,np.newaxis],v[mesh.b_verts]]),delimiter=",", fmt='%i,%f,%f,%f')
+
+    ## for unssigned vertices, set uniform values from Gauss-Bonnet
+    KfreeV = K>2*np.pi  
+    K[KfreeV] = (2*mesh.chi()*np.pi - np.sum(K[~KfreeV]))/sum(KfreeV)
 
     np.savetxt(fn+"_innerVertexID.txt",mesh.free_verts,fmt='%i')
     np.savetxt(fn+"_targetCurvature.txt", K)
