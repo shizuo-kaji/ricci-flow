@@ -11,6 +11,9 @@ written by S. Kaji
 
 # Requirements
 
+- Python 3: [Anaconda](https://anaconda.org) is recommended
+- plyfile installed by
+
     pip install plyfile
 
 # How to use

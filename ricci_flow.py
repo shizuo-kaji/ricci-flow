@@ -14,6 +14,13 @@ from functools import reduce
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+def isfloat(string):
+    try:
+        float(string)
+        return True
+    except ValueError:
+        return False
+
 class IdentityDictMap(object):
     def __init__(self, output=1, domain=None):
         self._o = output
@@ -256,9 +263,10 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         self.update()
 
     @classmethod
-    def from_riemannian_metric(cls, g, scheme="inversive"):
+    def from_riemannian_metric(cls, g, scheme="inversive", _alpha=-1):
         eta = sparse.lil_matrix((g._n, g._n))
         mesh = g._mesh
+        gamma = None
         # initial radius
         if scheme=="inversive":
             gamma = np.zeros((g._n,))
@@ -283,25 +291,32 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
 
         if "thurston" in scheme:
             # make circles intersect
-            alpha = 1.0
-            for i,j in mesh.edges:
-                alpha = max( 1.1*(g.length((i,j))/(gamma[i]+gamma[j])), alpha)
+            if _alpha<0:
+                alpha = 1.0
+                for i,j in mesh.edges:
+                    alpha = max( 1.1*(g.length((i,j))/(gamma[i]+gamma[j])), alpha)
+            else:
+                alpha = _alpha
             if alpha>1.0:
                 gamma *= alpha
                 print("alpha: ",alpha)
-            for i,j in mesh.edges:
-                assert gamma[i]+gamma[j] >= g.length((i,j))
-
+                for i,j in mesh.edges:
+                    assert gamma[i]+gamma[j] >= g.length((i,j))
 
 
         # edge weight
-        if scheme=="combinatorial":
+        if scheme=="combinatorial" or isfloat(scheme):
+            _eta = float(scheme) if isfloat(scheme) else 1
+            print("constant eta: ",_eta)
             gamma = np.ones(g._n)
             for edge in g._mesh.edges:
                 i,j = edge
-                eta[i,j] = 1
-                eta[j,i] = 1
-        else:
+                eta[i,j] = _eta
+                eta[j,i] = _eta
+        else: # eta from radii
+            if gamma is None:
+                print("Unknown scheme: ",scheme)
+                exit()
             for edge in g._mesh.edges:
                 i,j = edge
                 struct_c = ((g.length(edge)**2 - gamma[i]**2 - gamma[j]**2) / (2*gamma[i]*gamma[j]))
@@ -395,8 +410,8 @@ if __name__ == "__main__":
     parser.add_argument('input', help='Path to an input ply file')
     parser.add_argument('--learning_rate', '-lr', type=float, default=0.1, help='learning rate')
     parser.add_argument('--gtol', '-gt', type=float, default=1e-6, help='stopping criteria for gradient')
-    parser.add_argument('--method', '-m', default='thurston',choices=['inversive','thurston','thurston2','combinatorial'], help='method for Ricci flow')
-    parser.add_argument('--radius_scheme', '-r', default=0, help='scheme for determining radius of Thurston circle packing')
+    parser.add_argument('--method', '-m', default='thurston', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
+    parser.add_argument('--alpha', '-a', default=-1, type=float, help='multiplication factor of the radius of Thurston circle packing (set to negative for automatic detection)')
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
     parser.add_argument('--use_hess', '-uh', action='store_true',help='use hessian')
@@ -443,8 +458,9 @@ if __name__ == "__main__":
         np.savetxt(fn+"_boundary.csv", np.hstack([np.array(mesh.b_verts)[:,np.newaxis],v[mesh.b_verts]]),delimiter=",", fmt='%i,%f,%f,%f')
 
     ## for unssigned vertices, set uniform values from Gauss-Bonnet
-    KfreeV = K>2*np.pi  
-    K[KfreeV] = (2*mesh.chi()*np.pi - np.sum(K[~KfreeV]))/sum(KfreeV)
+    KfreeV = K>2*np.pi
+    if sum(KfreeV)>0:
+        K[KfreeV] = (2*mesh.chi()*np.pi - np.sum(K[~KfreeV]))/sum(KfreeV)
 
     np.savetxt(fn+"_innerVertexID.txt",mesh.free_verts,fmt='%i')
     np.savetxt(fn+"_targetCurvature.txt", K)
@@ -452,7 +468,7 @@ if __name__ == "__main__":
     print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/np.pi))
 
     # ricci flow
-    cp = CirclePackingMetric.from_riemannian_metric(g, scheme=args.method)
+    cp = CirclePackingMetric.from_riemannian_metric(g, scheme=args.method, _alpha=args.alpha)
     start = time.time()
     unif_cp = cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=args.use_hess, leave_boundary=args.leave_boundary)
     print ("{} sec".format(time.time() - start))
