@@ -14,6 +14,7 @@ from functools import reduce
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize,NonlinearConstraint,LinearConstraint,least_squares
+import subprocess
 
 def isfloat(string):
     try:
@@ -461,6 +462,7 @@ if __name__ == "__main__":
     parser.add_argument('--target_curvature_interior', '-Ki', default=10, type=float, help='target gaussian curvature value (if >2pi, uniform curvature for internal vertices posed by the Gauss-Bonnet)')
     parser.add_argument('--target_curvature_boundary', '-Kb', default=10, type=float, help='target gaussian curvature value on the boundary vertices (if >2pi, boundary curvature values are fixed to the ones of the initial mesh)')
     parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
+    parser.add_argument('--embed', '-e', action='store_true',help='perform embedding as well')
     args = parser.parse_args()
 
     os.makedirs(args.outdir,exist_ok=True)
@@ -539,3 +541,12 @@ if __name__ == "__main__":
     print("total curvature error: {}, boundary error: {}".format(np.abs(cp._K[UfreeV]-K[UfreeV]).sum(),np.abs(final_E[len(UfreeV):]).sum() ))
     plt.savefig(fn+"_curvature_ricci.png")
     plt.close()
+
+    if args.embed:
+        dn = os.path.dirname(__file__)
+        cmd = "python {} {}".format(os.path.join(dn,"metric_embed.py"), fn+".ply")
+        print("\n",cmd)
+        subprocess.call(cmd, shell=True)
+        cmd = "python {} {}".format(os.path.join(dn,"evaluation.py"),fn+"_final.ply")
+        print("\n",cmd)
+        subprocess.call(cmd, shell=True)
