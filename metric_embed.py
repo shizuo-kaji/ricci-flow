@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 ## pip install autograd
 import argparse,os,time
-import numpy as np
 import seaborn as sns
 from scipy.optimize import minimize,NonlinearConstraint,LinearConstraint,least_squares
 import matplotlib.pyplot as plt
 from plyfile import PlyData, PlyElement
-from ricci_flow import DiscreteRiemannianMetric, createMesh, save_ply
+from ricci_flow import DiscreteRiemannianMetric, TriangleMesh, save_ply
+
+import numpy as np
 
 def residual(x,edgelen2,inedge,cx,fixed_vert_idx,lambda_bdvert,fixed_beta):
     if fixed_beta:
@@ -25,8 +26,8 @@ def length_error(x,edgelen2,inedge):
     v = np.reshape(x[:-1],(-1,3))
     l2 = np.sum( (v[inedge[:,0]]-v[inedge[:,1]])**2, axis=1 )
     loss = np.sum((l2-beta*edgelen2)**2 )
-    if n_iter%20==0:
-        print(n_iter,beta,loss)
+#    if n_iter%20==0:
+#        print(n_iter,beta,loss)
     n_iter += 1
     return(loss)
 
@@ -103,16 +104,18 @@ n_iter=0
 print("optimising...")
 start = time.time()
 if args.method in ["lm","trf"]:
-    res = least_squares(residual, x0, verbose=2, method=args.method, gtol=args.gtol, args=(edgelen2,inedge,fixed_coords,args.fixed_vert,args.lambda_bdvert,args.fixed_beta))
+    target = lambda x: residual(x,edgelen2,inedge,fixed_coords,args.fixed_vert,args.lambda_bdvert,args.fixed_beta)
+    #res = least_squares(target, x0, jac=jacobian(target), verbose=2, method=args.method, gtol=args.gtol)
+    res = least_squares(target, x0, verbose=2, method=args.method, gtol=args.gtol)
 else:
     import autograd.numpy as np
     from autograd import grad, jacobian, hessian
     # jacobian and hessian by autograd
-    print("computing gradient and hessian...")
     target = lambda x: length_error(x,edgelen2,inedge) + args.lambda_bdvert*boundary_error(x,fixed_coords,args.fixed_vert)
-    jaco = jacobian(target)
-    hess = hessian(target)
-    res = minimize(target, x0, method = 'trust-ncg',options={'gtol': args.gtol, 'disp': True}, jac = jaco, hess=hess)
+    if args.method in ['CG','BFGS']:
+        res = minimize(target, x0, method = args.method,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target))
+    else:
+        res = minimize(target, x0, method = args.method,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target), hess=hessian(target))
 
 elapsed_time = time.time() - start
 print ("elapsed_time:{0}".format(elapsed_time) + "[sec]")
@@ -130,7 +133,7 @@ np.savetxt(bfn+"_edge_scaled.csv",np.hstack([inedge,np.sqrt(beta*edgelen2[:,np.n
 #np.savetxt(bfn+"_final.txt",vert2)
 save_ply(vert2,face,bfn+"_final.ply")
 
-mesh = createMesh(vert2,[frozenset(x) for x in face])
+mesh = TriangleMesh(vert2,face)
 g = DiscreteRiemannianMetric(mesh, mesh.lengths)
 sns.violinplot(y=[g.curvature(i) for i in mesh.verts], cut=0)
 plt.savefig(bfn+"_curvature_final.png")

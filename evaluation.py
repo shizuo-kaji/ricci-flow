@@ -4,7 +4,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from plyfile import PlyData, PlyElement
 import numpy as np
-from ricci_flow import DiscreteRiemannianMetric, createMesh
+from ricci_flow import DiscreteRiemannianMetric, TriangleMesh
 
 #########################
 parser = argparse.ArgumentParser(description='embedding of metric graphs')
@@ -87,7 +87,7 @@ else:
 
 print("\nvertices {}, faces {}, fixed vertices {}, K-constrained {}".format(len(vert),len(face),len(fixed_vert),len(constrained_vert)))
 
-mesh_final = createMesh(vert,[frozenset(x) for x in face])
+mesh_final = TriangleMesh(vert,face)
 g_final = DiscreteRiemannianMetric(mesh_final, mesh_final.lengths)
 g_dmat = DiscreteRiemannianMetric(mesh_final, edgedict)
 
@@ -96,7 +96,7 @@ if args.initial_mesh is not None:
     plydata_init = PlyData.read(args.initial_mesh)
     vert_init = np.vstack([plydata_init['vertex']['x'],plydata_init['vertex']['y'],plydata_init['vertex']['z']]).T
     face_init = plydata_init['face']['vertex_indices']
-    mesh_init = createMesh(vert_init,[frozenset(x) for x in face_init])
+    mesh_init = TriangleMesh(vert_init,face_init)
     g_init = DiscreteRiemannianMetric(mesh_init, mesh_init.lengths)
     angles_init = g_init.angle_array()
     angles_final = g_final.angle_array()

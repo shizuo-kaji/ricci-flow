@@ -13,6 +13,7 @@ import argparse,os,time
 from functools import reduce
 import seaborn as sns
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize,NonlinearConstraint,LinearConstraint,least_squares
 
 def isfloat(string):
     try:
@@ -20,6 +21,20 @@ def isfloat(string):
         return True
     except ValueError:
         return False
+
+def ricciEnergy(u, eta, targetK, free_verts, boundary_u, mesh, alpha=0):
+    g = np.exp(u)
+    K = np.full(len(u),2*np.pi)
+    K[mesh.b_verts] = np.pi
+    for i,j,k in mesh.faces:
+        Li = (2*g[j]*g[k]*eta[j,k] + g[j]**2 + g[k]**2)
+        Lj = (2*g[k]*g[i]*eta[k,i] + g[k]**2 + g[i]**2)
+        Lk = (2*g[i]*g[j]*eta[i,j] + g[i]**2 + g[j]**2)
+        K[i] -= np.arccos(np.clip((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)),-1.0,1.0))
+        K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
+        K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
+
+    return(np.concatenate( [K[free_verts]-targetK[free_verts], np.sqrt(alpha) * (u[mesh.b_verts]-boundary_u)] ))
 
 class IdentityDictMap(object):
     def __init__(self, output=1, domain=None):
@@ -69,42 +84,68 @@ def read_obj_file(f):
             # Throw out normal info for now...
             poly = [int(vstr.split("/")[0])-1 for vstr in tok[1:]]
             for face in triangulate(poly):
-                faces.append(frozenset(face))
+                faces.append(face)
 
     verts = np.array(verts)
     return(verts,faces)
 
-def createMesh(verts,faces):
-    edges = []
-    lengths = dict()
-    boundaries = []
-    maxnorm = max(np.linalg.norm(v) for v in verts)
-    verts = verts/maxnorm/2
-    for face in faces:
-        for edge in combinations(face, 2):
-            elen = norm(verts[edge[0]] - verts[edge[1]])
-            edge = frozenset(edge)
-            if edge not in edges:
-                edges.append(edge)
-                lengths[edge] = elen
-                boundaries.append(edge)
-            else:
-                boundaries.remove(edge)
-    if boundaries:
-        b_verts = sorted(list(reduce(lambda A,B: A.union(B), boundaries)))
-    else:
-        b_verts = []
-    return TriangleMesh(range(len(verts)),b_verts,edges,faces,lengths)
 
 class TriangleMesh(object):
-    def __init__(self, verts, b_verts, edges, faces, lengths, bg_geom="euclidean"):
-        self.verts = verts
-        self.b_verts = b_verts
-        self.free_verts = list(set(verts)-set(b_verts))
+    def __init__(self, vert_coords, faces, edges=None, lengths=None, bg_geom="euclidean"):
+        self.faces = [frozenset(f) for f in faces]
+        if edges is None:
+            edges = []
+            lengths = dict()
+            boundaries = []
+            maxnorm = max(np.linalg.norm(v) for v in vert_coords)
+            vert_coords = vert_coords/maxnorm/2
+            for face in self.faces:
+                for edge in combinations(face, 2):
+                    elen = norm(vert_coords[edge[0]] - vert_coords[edge[1]])
+                    edge = frozenset(edge)
+                    if edge not in edges:
+                        edges.append(edge)
+                        lengths[edge] = elen
+                        boundaries.append(edge)
+                    else:
+                        boundaries.remove(edge)
+            if boundaries:
+                b_verts = sorted(list(reduce(lambda A,B: A.union(B), boundaries)))
+            else:
+                b_verts = []
+
         self.edges = edges
-        self.faces = faces
-        self.bg_geom = bg_geom ## not used yet
         self.lengths = lengths
+        self.verts = list(range(len(vert_coords))) ## id
+        self.b_verts = b_verts ## id
+        self.free_verts = list(set(self.verts)-set(b_verts))
+        self.bg_geom = bg_geom ## not used yet
+        self.adj_faces = [[face for face in self.faces if vert in face] for vert in self.verts]
+
+        # # neighbouring vertices
+        # self.N = []
+        # for v in self.verts:
+        #     F = [face for face in faces if v in face]
+        #     print(v,F)
+        #     f = F.pop()
+        #     i = f.index(v)
+        #     L = [f[(i+1) % 3],f[(i+2) % 3]]
+        #     print(L)
+        #     while(F):
+        #         for i in range(len(F)):
+        #             if L[-1] in F[i]:
+        #                 f = F.pop(i)
+        #                 i = f.index(L[-1])
+        #                 L.append(f[(i+1) % 3])
+        #                 break
+        #         for i in range(len(F)):
+        #             if L[0] in F[i]:
+        #                 f = F.pop(i)
+        #                 i = f.index(L[0])
+        #                 L.append(f[(i-1) % 3])
+        #                 break
+        #     print(v, L)
+        #     self.N.append(L)
 
     def adjacent_edges(self, vert):
         return [edge for edge in self.edges if vert in edge]
@@ -177,26 +218,19 @@ class DiscreteRiemannianMetric(object):
                 U.append(self.angle(f,v))
         return(np.array(U))
 
-    def law_of_cosines(self, a,b,c):
-        ratio = (a**2 + b**2 - c**2)/(2.0*a*b)
-        return np.arccos(ratio)
-
     def compute_angle(self, face, vert):
         a,b,c = self.abc_for_vert(face,vert)
-        assert(a != 0 and b != 0 and c != 0)
-        try:
-            return self.law_of_cosines(a,b,c)
+        try:   ## this is faster than np.clip or np.nan_to_num
+            return np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
         except FloatingPointError:
-#            print(self.is_ok())
             return 0.0001
-            raise
+ #       return(np.arccos( np.clip( (a**2 + b**2 - c**2)/(2.0*a*b), -1.0, 1.0)) )
 
     def curvature(self, vert):
-        faces = [face for face in self._mesh.faces if vert in face]
         if vert in self._mesh.b_verts:
-            return np.pi - sum([self.angle(face, vert) for face in faces])
+            return np.pi - sum([self.angle(face, vert) for face in self._mesh.adj_faces[vert]])
         else:
-            return 2*np.pi - sum([self.angle(face, vert) for face in faces])
+            return 2*np.pi - sum([self.angle(face, vert) for face in self._mesh.adj_faces[vert]])
 
     def curvature_array(self):
         K = np.zeros(len(self._mesh.verts))
@@ -258,6 +292,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         self.u = self.conf_factor(radius_map)
         self._gamma = radius_map
         self.u = self.conf_factor(radius_map)
+        self.u = self.u - sum(self.u)/self._n
         self._theta = dict()
         self._l = dict()
         self.update()
@@ -397,25 +432,32 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             self.u = self.u - sum(self.u)/self._n
             self.update()
             DeltaK = self._K - target_K
-            if niter % 10 == 0:
+            if niter % 100 == 0:
                 if leave_boundary:
                     print("niter:", niter, " |DeltaK|_1 %s"%np.abs(DeltaK[self._mesh.free_verts]).sum())
                 else:
                     print("niter:", niter, " |DeltaK|_1 %s"%np.abs(DeltaK).sum())
             niter += 1
         return self
-    
+
+    def ricci_flow_op(self, targetK, UfreeV, boundary_u, alpha=1.0, xtol=1e-4, optimizer="lm"):
+        target = lambda x: ricciEnergy(x, self._eta, targetK, UfreeV, boundary_u, self._mesh, alpha)
+        self.u = least_squares(target, self.u, verbose=2, method=optimizer, xtol=xtol, gtol=xtol).x
+        self.update()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='find metric with a desired curvature by Ricci flow')
     parser.add_argument('input', help='Path to an input ply file')
     parser.add_argument('--learning_rate', '-lr', type=float, default=0.1, help='learning rate')
     parser.add_argument('--gtol', '-gt', type=float, default=1e-6, help='stopping criteria for gradient')
-    parser.add_argument('--method', '-m', default='thurston', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
+    parser.add_argument('--lambda_bdu', '-lu', type=float, default=1.0, help="weight for boundary constraint")
+    parser.add_argument('--method', '-m', default='inversive', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
     parser.add_argument('--alpha', '-a', default=-1, type=float, help='multiplication factor of the radius of Thurston circle packing (set to negative for automatic detection)')
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
-    parser.add_argument('--use_hess', '-uh', action='store_true',help='use hessian')
-    parser.add_argument('--leave_boundary', '-lb', action='store_true',help='do not touch boundary')
+    parser.add_argument('--optimizer', '-op', default='trf', choices=['sgd','newton','lm','trf'], help='optimiser')
+    parser.add_argument('--leave_boundary', '-lb', action='store_true',help='do not touch boundary (keep radii unchanged)')
     parser.add_argument('--target_curvature_interior', '-Ki', default=10, type=float, help='target gaussian curvature value (if >2pi, uniform curvature for internal vertices posed by the Gauss-Bonnet)')
     parser.add_argument('--target_curvature_boundary', '-Kb', default=10, type=float, help='target gaussian curvature value on the boundary vertices (if >2pi, boundary curvature values are fixed to the ones of the initial mesh)')
     parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
@@ -431,10 +473,10 @@ if __name__ == "__main__":
     else:
         plydata = PlyData.read(args.input)
         v = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
-        f = [frozenset(x) for x in plydata['face']['vertex_indices']]
+        f = plydata['face']['vertex_indices']
 
     save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply")
-    mesh = createMesh(v,f)
+    mesh = TriangleMesh(v,f)
     g = DiscreteRiemannianMetric(mesh, mesh.lengths)
     
     # set target curvature
@@ -462,6 +504,12 @@ if __name__ == "__main__":
     if sum(KfreeV)>0:
         K[KfreeV] = (2*mesh.chi()*np.pi - np.sum(K[~KfreeV]))/sum(KfreeV)
 
+    # vertices to determine u
+    if args.leave_boundary:
+        UfreeV = mesh.free_verts
+    else:
+        UfreeV = mesh.verts
+
     np.savetxt(fn+"_innerVertexID.txt",mesh.free_verts,fmt='%i')
     np.savetxt(fn+"_targetCurvature.txt", K)
     print("#V: %s, #E: %s, #F: %s, Min vertex valence: %s" % (len(mesh.verts),len(mesh.edges),len(mesh.faces), mesh.min_valence()))
@@ -469,13 +517,25 @@ if __name__ == "__main__":
 
     # ricci flow
     cp = CirclePackingMetric.from_riemannian_metric(g, scheme=args.method, _alpha=args.alpha)
+
+    init_u = cp.u.copy()
+    init_E = ricciEnergy(cp.u, cp._eta, K, UfreeV, init_u[mesh.b_verts], mesh, 1)
+
     start = time.time()
-    unif_cp = cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=args.use_hess, leave_boundary=args.leave_boundary)
+    if args.optimizer == "sgd":
+        cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=False, leave_boundary=args.leave_boundary)
+    elif args.optimizer == "newton":
+        cp.ricci_flow(target_K=K, dt=args.learning_rate, thresh=args.gtol, use_hess=True, leave_boundary=args.leave_boundary)
+    else:
+        cp.ricci_flow_op(K, UfreeV, init_u[mesh.b_verts], alpha=args.lambda_bdu, xtol=args.gtol, optimizer=args.optimizer)
     print ("{} sec".format(time.time() - start))
 
-    edgedata = np.array( [[i,j,l] for (i,j), l in unif_cp._l.items()] )
+    final_E = ricciEnergy(cp.u, cp._eta, K, UfreeV, init_u[mesh.b_verts], mesh, 1)
+    print("Ricci Energy initial: {}, final: {}".format(np.abs(init_E[:len(UfreeV)]**2).sum(),np.abs(final_E[:len(UfreeV)]**2).sum() ))
+
+    edgedata = np.array( [[i,j,l] for (i,j), l in cp._l.items()] )
     np.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')
-    sns.violinplot(y=unif_cp._K[mesh.free_verts], cut=0)
-    print("total curvature error: ", np.abs(unif_cp._K[mesh.free_verts]-K[mesh.free_verts]).sum() )
+    sns.violinplot(y=cp._K[UfreeV], cut=0)
+    print("total curvature error: {}, boundary error: {}".format(np.abs(cp._K[UfreeV]-K[UfreeV]).sum(),np.abs(final_E[len(UfreeV):]).sum() ))
     plt.savefig(fn+"_curvature_ricci.png")
     plt.close()

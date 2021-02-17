@@ -20,10 +20,11 @@ written by S. Kaji
 
 ## with boundary and specified target curvatures for each vertex
 
-    python ricci_flow.py dome.ply -K dome_targetK_hat.csv
+    python ricci_flow.py dome.ply -K dome_targetK_hat.csv --gtol 1e-6 -op trf
 
 reads mesh from dome.ply and target vertex curvatures from dome_targetK_hat.csv and performs Ricci flow.
-(for vertices with target curvature > 2pi or with no specified target curvature values, the target curvatures are inferred by the Gauss-Bonnet theorem)
+(for vertices with target curvature > 2pi or with no specified target curvature values, the target curvatures are inferred by the Gauss-Bonnet theorem).
+The trf optimiser with gtol 1e-6 is used (see scipy.optimize).
 
 Each row of dome_targetK_hat.csv consists:
 
@@ -84,15 +85,15 @@ The final result is obtained by
 
 ## without boundary
 
-    python ricci_flow.py torus.obj -m inversive -uh
+    python ricci_flow.py torus.obj -m inversive -op newton
 
 reads mesh from torus.obj and deform its metric (edge length) by Ricci flow on inversive Circle Packing metric.
 
-    python ricci_flow.py torus.obj -m thurston -uh
+    python ricci_flow.py torus.obj -m thurston -op newton
 
 uses the Thurston's Circle Packing metric.
 
-    python ricci_flow.py torus.obj -m combinatorial -uh
+    python ricci_flow.py torus.obj -m combinatorial -op newton
 
 ignores the initial geometry and construct a circle packing purely combinatorially from the mesh.
 
