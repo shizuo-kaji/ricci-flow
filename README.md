@@ -8,6 +8,7 @@ This program takes
 - a specification of Gaussian curvature (angle defect) for each vertex
 - boundary conditions
 - a conformal class specified by circle packing or by the inigial mesh
+
 and produces a surface mesh meeting the conditions.
 
 In contrast to usual implementations of Ricci flow based geometry processing,
