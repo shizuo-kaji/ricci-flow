@@ -1,13 +1,20 @@
 Metric deformation by Ricci flow
 ==========
-
-- ricci_flow.py:
-
-[Original](https://github.com/hchapman/ricci-flow) written by Harrison Chapman.
-Bug fix/modified by S. Kaji (Dec. 2020)
-
-- metric_embed.py:
 written by S. Kaji
+based on [Original](https://github.com/hchapman/ricci-flow) written by Harrison Chapman.
+
+This program takes 
+- a surface mesh 
+- a specification of Gaussian curvature (angle defect) for each vertex
+- boundary conditions
+- a conformal class specified by circle packing or by the inigial mesh
+and produces a surface mesh meeting the conditions.
+
+In contrast to usual implementations of Ricci flow based geometry processing,
+this code directly optimises the Ricci energy, and hence, offers a flexibility of
+incorpolating various constraints.
+Also, as our scheme is based on a simple optimisation problem of a scalar function,
+any advanced optimisers can be easily utilised.
 
 # Requirements
 
@@ -108,6 +115,12 @@ to obtain the final deformed mesh result/torus_final.ply.
 ## Schemes for circle packing metric
 
 Currently, thurston, thurston2, inversive, combinatorial are supported.
+
+For example,
+
+    python ricci_flow.py dome.ply -lb -Ki 0 -m 1.0 -e
+
+yields a final mesh dome_final.ply in the conformal class with a constant edge weight 1.0.
 
 ## Limitation
 

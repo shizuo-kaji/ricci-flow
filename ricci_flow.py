@@ -23,7 +23,7 @@ def isfloat(string):
     except ValueError:
         return False
 
-def ricciEnergy(u, eta, targetK, free_verts, boundary_u, mesh, alpha=0):
+def ricciEnergy(u, eta, targetK, KspecifiedV, boundary_u, mesh, alpha=0):
     g = np.exp(u)
     K = np.full(len(u),2*np.pi)
     K[mesh.b_verts] = np.pi
@@ -35,7 +35,7 @@ def ricciEnergy(u, eta, targetK, free_verts, boundary_u, mesh, alpha=0):
         K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
         K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
 
-    return(np.concatenate( [K[free_verts]-targetK[free_verts], np.sqrt(alpha) * (u[mesh.b_verts]-boundary_u)] ))
+    return(np.concatenate( [K[KspecifiedV]-targetK[KspecifiedV], np.sqrt(alpha) * (u[mesh.b_verts]-boundary_u)] ))
 
 class IdentityDictMap(object):
     def __init__(self, output=1, domain=None):
@@ -475,7 +475,10 @@ if __name__ == "__main__":
     else:
         plydata = PlyData.read(args.input)
         v = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
-        f = plydata['face']['vertex_indices']
+        f = []
+        for poly in plydata['face']['vertex_indices']:
+            for face in triangulate(poly):
+                f.append(face)
 
     save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply")
     mesh = TriangleMesh(v,f)
