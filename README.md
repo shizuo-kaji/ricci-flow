@@ -89,9 +89,9 @@ The final result is obtained by
     python metric_embed.py result/dome.ply -lv 0
 
 
-
-
 ## without boundary
+Note that in the following, we try to find a torus with a constant curvature (which is zero).
+Recall that there is no flat torus in R^3, so the result will be distorted.
 
     python ricci_flow.py torus.obj -m inversive -op newton
 
@@ -108,10 +108,16 @@ ignores the initial geometry and construct a circle packing purely combinatorial
 The PLY file result/torus.ply is same as the (non-deformed) original mesh. 
 The final result is obtained by
 
-    python metric_embed.py result/torus.ply -lv 0 -fb --gtol 1e-6
+    python metric_embed.py result/torus.ply -lv 0 --gtol 1e-6
 
 to obtain the final deformed mesh result/torus_final.ply.
 
+## Convexity enforced embedding
+By setting -lc 1 -m lm, a convex embedding is searched for:
+
+    python metric_embed.py result/dome.ply -lc 1 -m lm  
+
+Here, convexity means that the z-value at every inner vertex is bigger than the average of the neighbouring vertices.
 
 ## Schemes for circle packing metric
 
@@ -123,9 +129,36 @@ For example,
 
 yields a final mesh dome_final.ply in the conformal class with a constant edge weight 1.0.
 
+## Direct optimisation of the metric without conformality
+The following optimise edge length directly to have the specified uniform curvature of 0.1 while fixing the boundary vertices.
+
+    python ricci_flow.py dome.ply -lb -Ki 0.1 -ot edge -e
+
+This is slower and allows no control on the conformal class.
+In most cases, the final embedding is not good since the triangle inequality is ignored.
+But it may offer better control over the boundary for certain cases.
+
 ## Limitation
 
 Ricci flow converges to give a metric with target cuvatures if the target curvatures are _admissible_.
+
+# Some background
+
+The problem of finding a mesh with desired properties (such as specified curvatures)
+can often reduces to an optimisation problem.
+A straightforward way to design a cost function is to use vertex positions as free variables.
+However, such a cost function can have many local minima and hard to optimise.
+The two main ideas here are
+- splitting the optimisation into two stages: first, optimise the metric of the mesh and then optimise the vertex positions.
+- and the change of free variables: the metric can be determined by edge lengths, circle packing radii, or conformal factors.
+
+There can be different embeddings of a mesh with specified metric (edge lengths); Cauchy's rigidity holds only for convex meshes.
+On the other hand, a metric is (almost) uniquely determined by the curvature.
+The above splitting picks out the non-convex part.
+
+The space of feasible metrics is complicated ddue to the triangle inequality.
+On the other hand, the space of circle packing radius (resp. conformal factors) is Euclidean and suitable for optimisation.
+
 
 
 # Files
