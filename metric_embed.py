@@ -9,7 +9,7 @@ from ricci_flow import DiscreteRiemannianMetric, TriangleMesh, save_ply
 
 import numpy as np
 
-def residual(x,edgelen2,inedge,cx,fixed_vert_idx,lambda_bdvert,fixed_beta):
+def residual(x,edgelen2,inedge,cx,fixed_vert_idx,lambda_bdvert=0,lambda_convex=0,mesh=None,fixed_beta=False):
     if fixed_beta:
         beta = 1
     else:
@@ -18,6 +18,8 @@ def residual(x,edgelen2,inedge,cx,fixed_vert_idx,lambda_bdvert,fixed_beta):
     l2 = np.sum( (v[inedge[:,0]]-v[inedge[:,1]])**2, axis=1 )
     loss = (l2-beta*edgelen2).ravel()
     loss = np.concatenate( [loss, np.sqrt(lambda_bdvert)* (v[fixed_vert_idx]-cx).ravel()] )
+    if lambda_convex>0:
+        loss = np.concatenate( [loss, np.sqrt(lambda_convex)*np.maximum(0,np.array([-v[i,2]+v[mesh.adj_vert[i],2].mean() for i in mesh.free_verts])) ] ) # quick-dirty
     return(loss)
 
 def length_error(x,edgelen2,inedge):
@@ -44,9 +46,10 @@ parser.add_argument('--inner_edge', '-ie', default=None, help='indices of inner 
 parser.add_argument('--method', '-m', default='trf',help='method for optimisation')
 parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
 parser.add_argument('--lambda_bdvert', '-lv', type=float, default=1e-2, help="weight for boundary constraint")
+parser.add_argument('--lambda_convex', '-lc', type=float, default=0, help="weight for convexity constraint")
 parser.add_argument('--gtol', '-gt', type=float, default=1e-8, help="stopping criteria for gradient")
-parser.add_argument('--verbose', '-v', action='store_true',help='print debug information')
-parser.add_argument('--fixed_beta', '-fb', action='store_true',help='fix beta (distance scaling) as well')
+parser.add_argument('--verbose', '-v', type=int, default = 2)
+parser.add_argument('--fixed_beta', '-fb', action='store_true',help='fix (not optimise) beta (distance scaling)')
 args = parser.parse_args()
 
 os.makedirs(args.outdir,exist_ok=True)
@@ -78,17 +81,22 @@ else:
     edgedat = np.array([ [i,j,l] for i,j,l in zip(edgedat[:,0],edgedat[:,1],edgedat[:,2]) if i<j ])
     inedge = edgedat[:,:2].astype(np.uint32)
     edgelen = edgedat[:,2]
+
+fixed_coords = None
 if args.boundary_vertex:
     print("reading boundary data from ", args.boundary_vertex)
     bddat = np.loadtxt(args.boundary_vertex,delimiter=",")
-    args.fixed_vert = bddat[:,0].astype(np.uint32)
-    fixed_coords = bddat[:,1:]
-else:
+    if len(bddat)>0:
+        args.fixed_vert = bddat[:,0].astype(np.uint32)
+        fixed_coords = bddat[:,1:]
+if fixed_coords is None:
     args.lambda_bdvert = 0
     args.fixed_vert =np.array([0])
     fixed_coords = vert[args.fixed_vert]
 
 print("\nvertices {}, faces {}, fixed vertices {}".format(len(vert),len(face),len(args.fixed_vert)))
+if len(args.fixed_vert) < 2:
+    args.fixed_beta = True # otherwise, everything shrinks to a point
 
 # initial scaling for dmat
 #l1 = np.sum((vert[inedge[0,0]]-vert[inedge[0,1]])**2)
@@ -97,16 +105,24 @@ edgelen2 = edgelen**2
 
 #%%
 # initial point
+# vert[:,2] = np.abs(2*vert[:,2]) ## force positive z for the initial point
 x0 = np.concatenate([vert.flatten(),np.array([1.0])]) ## last entry is for scaling factor
 n_iter=0
 
 # optimise
-print("optimising...")
 start = time.time()
+if args.lambda_convex>0:
+    mesh = TriangleMesh(vert,face)
+else:
+    mesh = None
+
 if args.method in ["lm","trf"]:
-    target = lambda x: residual(x,edgelen2,inedge,fixed_coords,args.fixed_vert,args.lambda_bdvert,args.fixed_beta)
+    target = lambda x: residual(x,edgelen2,inedge,fixed_coords,args.fixed_vert,args.lambda_bdvert, args.lambda_convex, mesh, args.fixed_beta)
+#    bd = (np.full(len(x0),-np.inf), np.full(len(x0),np.inf))
+#    bd[0][2::3] = 0  ## set lower bound of z
+#    res = least_squares(target, x0, bounds=bd, verbose=2, method=args.method, gtol=args.gtol)
     #res = least_squares(target, x0, jac=jacobian(target), verbose=2, method=args.method, gtol=args.gtol)
-    res = least_squares(target, x0, verbose=2, method=args.method, gtol=args.gtol)
+    res = least_squares(target, x0, verbose=args.verbose, method=args.method, gtol=args.gtol)
 else:
     import autograd.numpy as np
     from autograd import grad, jacobian, hessian
@@ -123,6 +139,7 @@ print ("elapsed_time:{0}".format(elapsed_time) + "[sec]")
 #%% plot result
 beta = res.x[-1]
 vert2=np.reshape(res.x[:-1],(-1,3))
+#print(vert2[:,2].min())
 
 print("beta: {}, boundary squared error: {}".format(beta, (np.sum( (fixed_coords-vert2[args.fixed_vert])**2 ) )))
 

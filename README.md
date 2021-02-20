@@ -1,7 +1,7 @@
 Metric deformation by Ricci flow
 ==========
 written by S. Kaji
-based on [Original](https://github.com/hchapman/ricci-flow) written by Harrison Chapman.
+based on the [code](https://github.com/hchapman/ricci-flow) written by Harrison Chapman.
 
 This program takes 
 - a surface mesh 
@@ -12,7 +12,7 @@ This program takes
 and produces a surface mesh meeting the conditions.
 
 In contrast to usual implementations of Ricci flow based geometry processing,
-this code directly optimises the Ricci energy, and hence, offers a flexibility of
+this code directly optimises an anpproximated Ricci energy, and hence, offers a flexibility of
 incorpolating various constraints.
 Also, as our scheme is based on a simple optimisation problem of a scalar function,
 any advanced optimisers can be easily utilised.
