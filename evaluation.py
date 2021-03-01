@@ -98,27 +98,27 @@ if args.initial_mesh is not None:
     angles_init = g_init.angle_array()
     angles_final = g_final.angle_array()
     angles_dmat = g_dmat.angle_array()
-    print("angle squared difference: (init vs final) {}, (init vs dmat) {}".format(((angles_init-angles_final)**2).sum(),  ((angles_init-angles_dmat)**2).sum()))
+    print("angle MAE: (init vs final) {}, (init vs dmat) {}".format( np.abs(angles_init-angles_final).mean(),  np.abs(angles_init-angles_dmat).mean() ))
 
 
 # %%
 np.savetxt(os.path.join(args.outdir,"curvatures_target_dmat_final.txt"),np.vstack([targetK[KspecifiedV], g_dmat._K[KspecifiedV], g_final._K[KspecifiedV]]).T,fmt='%1.8f')
 
 K_error = np.abs(g_final._K[KspecifiedV]-targetK[KspecifiedV])
-bd_error = ( (fixed_coords-vert[fixed_vert])**2 )
+bd_error = (np.sqrt(np.sum( (fixed_coords-vert[fixed_vert])**2, axis=1 )) ) 
 l2 = np.sum( (vert[inedge[:,0]]-vert[inedge[:,1]])**2, axis=1 )
 edge_error = np.abs(l2-edgelen**2)
 
-print("edge^2 error: {}, boundary squared error: {}".format(np.sum(edge_error),np.sum(bd_error)))
-print("curvature l1 error (final vs target): {}, (dmat vs target): {}".format(np.sum(K_error),np.abs(g_dmat._K[KspecifiedV]-targetK[KspecifiedV]).sum()))
+print("edge length MAE (dmat vs final): {} \nboundary MAE: {}".format(np.mean(edge_error),np.mean(bd_error)))
+print("curvature MAE (final vs target): {}, (dmat vs target): {}".format(np.mean(K_error),np.abs(g_dmat._K[KspecifiedV]-targetK[KspecifiedV]).mean()))
 #np.savetxt(os.path.join(args.outdir,"edge_final.csv"),np.hstack([inedge,dmat[inedge[:,0],inedge[:,1]][:,np.newaxis]]),delimiter=",",fmt="%i,%i,%f")
 
 # graphs
 sns.violinplot(y=edge_error, cut=0)
-plt.savefig(os.path.join(args.outdir,"edge_error.png"))
+plt.savefig(os.path.join(args.outdir,"error_edge_length.png"))
 plt.close()
 sns.violinplot(y=bd_error, cut=0)
-plt.savefig(os.path.join(args.outdir,"boundary_error.png"))
+plt.savefig(os.path.join(args.outdir,"error_boundary.png"))
 plt.close()
 
 sns.violinplot(y=targetK, cut=0)
@@ -131,13 +131,13 @@ sns.violinplot(y=g_final._K[KspecifiedV], cut=0)
 plt.savefig(os.path.join(args.outdir,"curvature_final.png"))
 plt.close()
 sns.violinplot(y=np.abs(g_dmat._K[KspecifiedV]-targetK[KspecifiedV]), cut=0)
-plt.savefig(os.path.join(args.outdir,"error_dmat.png"))
+plt.savefig(os.path.join(args.outdir,"error_curvature_dmat.png"))
 plt.close()
 sns.violinplot(y=np.abs(g_final._K[KspecifiedV]-g_dmat._K[KspecifiedV]), cut=0)
-plt.savefig(os.path.join(args.outdir,"error_final_vs_dmat.png"))
+plt.savefig(os.path.join(args.outdir,"error_curvature_final_vs_dmat.png"))
 plt.close()
 sns.violinplot(y=np.abs(g_final._K[KspecifiedV]-targetK[KspecifiedV]), cut=0)
-plt.savefig(os.path.join(args.outdir,"error_final.png"))
+plt.savefig(os.path.join(args.outdir,"error_curvature_final.png"))
 plt.close()
 
 sns.violinplot(y=np.degrees(g_final.angle_array()), cut=0)

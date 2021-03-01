@@ -4,7 +4,7 @@ written by S. Kaji
 based on the [code](https://github.com/hchapman/ricci-flow) written by Harrison Chapman.
 
 This program takes 
-- a surface mesh 
+- a surface mesh (in .obj or .ply format)
 - a specification of Gaussian curvature (angle defect) for each vertex
 - boundary conditions
 - a conformal class specified by circle packing or by the inigial mesh
@@ -12,8 +12,8 @@ This program takes
 and produces a surface mesh meeting the conditions.
 
 In contrast to usual implementations of Ricci flow based geometry processing,
-this code directly optimises an anpproximated Ricci energy, and hence, offers a flexibility of
-incorpolating various constraints.
+this code directly optimises an anpproximate Ricci energy, and hence, offers a flexibility of
+incorpolating various constraints as loss terms.
 Also, as our scheme is based on a simple optimisation problem of a scalar function,
 any advanced optimisers can be easily utilised.
 
@@ -26,7 +26,7 @@ any advanced optimisers can be easily utilised.
 
 # How to use
 
-## with boundary and specified target curvatures for each vertex
+## with free boundary and specified target curvatures for each vertex
 
     python ricci_flow.py dome.ply -K dome_targetK_hat.csv --gtol 1e-6 -op trf
 

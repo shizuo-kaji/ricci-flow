@@ -38,6 +38,11 @@ def ricciEnergy(r, eta, targetK, KspecifiedV, mesh):
 def fixConstraints(x,indices,value):
     return(x[indices]-value)
 
+def edgelenConstraints(r,eta,fixed_edges,edgelen):
+    L2 = np.array([(2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2) for (i,j) in fixed_edges])
+#    print(np.abs(L2 - edgelen**2).mean())
+    return(L2 - edgelen**2)
+
 def curvatureError(edgelen, edge_map, targetK, KspecifiedV, mesh):
     K = np.full(len(mesh.verts),2*np.pi)
     K[mesh.b_verts] = np.pi
@@ -110,7 +115,7 @@ class TriangleMesh(object):
             lengths = dict()
             self.b_edges = []
             maxnorm = max(np.linalg.norm(v) for v in vert_coords)
-            vert_coords = vert_coords/maxnorm/2
+            #vert_coords = vert_coords/maxnorm/2
             for face in self.faces:
                 for edge in combinations(face, 2):
                     elen = norm(vert_coords[edge[0]] - vert_coords[edge[1]])
@@ -120,7 +125,8 @@ class TriangleMesh(object):
                         lengths[edge] = elen
                         self.b_edges.append(edge)
                     else:
-                        self.b_edges.remove(edge)
+                        if edge in self.b_edges:
+                            self.b_edges.remove(edge)
             if self.b_edges:
                 b_verts = sorted(list(reduce(lambda A,B: A.union(B), self.b_edges)))
             else:
@@ -314,10 +320,12 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             self._gamma = radius_map
             self.u = self.conf_factor(radius_map)
             self.scale_factor = np.exp(self.u.mean())
+            self.u -= self.u.mean()
             self.update()
 
     def compute_r_eta_from_metric(self, g, scheme="inversive", _alpha=-1):
-        eta = sparse.lil_matrix((g._n, g._n))
+        #eta = sparse.lil_matrix((g._n, g._n))
+        eta = dict()
         mesh = g._mesh
         gamma = None
         # initial radius
@@ -366,6 +374,11 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                 #pregamma = min(pregamma, g.length((i,j)))
                 eta[i,j] = _eta
                 eta[j,i] = _eta
+        elif os.path.isfile(scheme):
+            etadata = np.loadtxt(scheme, delimiter=",")
+            gamma = np.full(g._n, 1.0)
+            for i,j,l in etadata:
+                eta[int(i),int(j)] = l
         else: # eta from radii
             if gamma is None:
                 print("Unknown scheme: ",scheme)
@@ -383,6 +396,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         self._eta = eta
         self.u = self.conf_factor(gamma)
         self.scale_factor = np.exp(self.u.mean())
+        self.u -= self.u.mean()
         self.update()
         # This new metric should approximate the old
         #for i,j in mesh.edges:
@@ -399,7 +413,6 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         return np.sqrt(2*g_i*g_j*self._eta[i,j] + self._eps[i] * g_i**2 + self._eps[j] * g_j**2)
 
     def update(self):
-        self.u -= self.u.mean()
         self._gamma = np.exp(self.u)
         for edge in self._mesh.edges:
             i,j = edge
@@ -452,6 +465,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             else:
                 self.u[free_verts] -= dt*DeltaK[free_verts]
             #self.u[fixed_verts] = target_u[fixed_verts]
+            self.u -= self.u.mean()
             self.update()
             DeltaK = self._K - target_K
             if niter % 100 == 0 and verbose>0:
@@ -459,16 +473,27 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             niter += 1
         return self
 
-    def ricci_flow_op(self, targetK, KspecifiedV, UfreeV, target_u, alpha=1.0, xtol=1e-4, opt_target="conformalFactor", optimizer="lm", verbose=1):
+    def ricci_flow_op(self, targetK, KspecifiedV, UfreeV, target_u=None, target_l=None, alpha=1.0, xtol=1e-4, opt_target="conformalFactor", optimizer="lm", verbose=1):
         UfixV = list(set(self._mesh.verts)-set(UfreeV))
         #print(len(UfreeV),len(UfixV),len(cp.u))
+        if target_l is None:
+            w = np.sqrt(alpha*len(KspecifiedV)/max(1,len(UfixV)))
+        else:
+            w = np.sqrt(alpha*len(KspecifiedV)/max(1,len(target_l)))
         if opt_target=="conformalFactor":
-            target = lambda x: np.concatenate( [ricciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), np.sqrt(alpha)*fixConstraints(x, UfixV, target_u[UfixV])] )
+            if target_l is None:
+                target = lambda x: np.concatenate( [ricciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, target_u[UfixV])] )
+            else:
+                target = lambda x: np.concatenate( [ricciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(np.exp(x), self._eta, self._mesh.b_edges, target_l)] )
+                #print(target(self._gamma),edgelenConstraints(np.exp(self.u), self._eta, self._mesh.b_edges, target_l))
             self.u = least_squares(target, self.u, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x
             self.update()
         elif opt_target=="radius":
-            boundary_r = np.exp(target_u)
-            target = lambda x: np.concatenate( [ricciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), np.sqrt(alpha)*fixConstraints(x, UfixV, boundary_r[UfixV])] )
+            if target_l is None:
+                boundary_r = np.exp(target_u)
+                target = lambda x: np.concatenate( [ricciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, boundary_r[UfixV])] )
+            else:
+                target = lambda x: np.concatenate( [ricciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(x, self._eta, self._mesh.b_edges, target_l)] )
             self.u = np.log(least_squares(target, self._gamma, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x)
             self.update()
         elif opt_target=="edge":
@@ -476,7 +501,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             fixedE = [edge_map[i,j] for i,j in self._mesh.b_edges]
             boundary_e = [self._l[i,j] for i,j in self._mesh.b_edges]
             target = lambda x: np.concatenate( [curvatureError(x, edge_map, targetK, KspecifiedV, self._mesh), np.sqrt(alpha)*fixConstraints(x, fixedE, boundary_e)])
-            res = least_squares(target, edgelen, bounds=(0,np.inf), verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x
+            res = least_squares(target, edgelen, bounds=(0,np.inf), verbose=verbose, method="trf", xtol=xtol, gtol=xtol).x # lm does not support bounds
             for i,j in self._mesh.edges:
                 self._l[i,j] = res[edge_map[i,j]]
                 self._l[j,i] = res[edge_map[i,j]]
@@ -491,7 +516,7 @@ if __name__ == "__main__":
     parser.add_argument('--learning_rate', '-lr', type=float, default=0.1, help='learning rate')
     parser.add_argument('--gtol', '-gt', type=float, default=1e-6, help='stopping criteria for gradient')
     parser.add_argument('--lambda_bd', '-lv', type=float, default=1.0, help="weight for boundary constraint")
-    parser.add_argument('--method', '-m', default='inversive', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
+    parser.add_argument('--method', '-m', default='inversive', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta, or a csv file name containing values for eta')
     parser.add_argument('--opt_target', '-ot', default='conformalFactor', choices=['conformalFactor','radius','edge'], help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
     parser.add_argument('--alpha', '-a', default=-1, type=float, help='multiplication factor of the radius of Thurston circle packing (set to negative for automatic detection)')
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
@@ -515,6 +540,8 @@ if __name__ == "__main__":
     else:
         plydata = PlyData.read(args.input)
         v = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
+        #v[:,2]=0 ## flatten for experiment
+        print(v[:,2].min(),v[:,2].max())
         f = []
         for poly in plydata['face']['vertex_indices']:
             for face in triangulate(poly):
@@ -523,6 +550,7 @@ if __name__ == "__main__":
     save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply")
     mesh = TriangleMesh(v,f)
     g = DiscreteRiemannianMetric(mesh, mesh.lengths)
+    #print(mesh.b_edges, mesh.b_verts)
 
     # set target curvature
     K = np.full(len(v),4*np.pi)
@@ -544,7 +572,9 @@ if __name__ == "__main__":
     ## for unssigned vertices, set uniform values determined by the Gauss-Bonnet
     KfreeV = K>2*np.pi
     if sum(KfreeV)>0:
-        K[KfreeV] = (2*mesh.chi()*np.pi - np.sum(K[~KfreeV]))/sum(KfreeV)
+        uK = (2*mesh.chi()*np.pi - np.sum(K[~KfreeV]))/sum(KfreeV)
+        K[KfreeV] = uK
+        print("target K set to {} uniformly at {} vertices".format(uK,KfreeV.sum()))
 
     # vertices with specified K
     if args.leave_boundary:
@@ -558,13 +588,18 @@ if __name__ == "__main__":
     print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/np.pi))
 
     # ricci flow
+    init_boundary_len = np.array([mesh.lengths[e] for e in mesh.b_edges])
+    #print(norm(v[147]-v[148]),mesh.lengths[frozenset({147,148})],init_boundary_len,mesh.b_edges)
     cp = CirclePackingMetric(mesh)
     cp.compute_r_eta_from_metric(g, scheme=args.method, _alpha=args.alpha)
-    init_boundary_len = np.array([mesh.lengths[e] for e in mesh.b_edges])/cp.scale_factor
-
+    print("CP factor {}".format(cp.scale_factor))
+    #print("AVG bd edge length: ", init_boundary_len.mean())
+    init_boundary_len /= cp.scale_factor
+    
     init_u = cp.u.copy()
     cp_boundary_len = np.array([cp._l[i,j] for i,j in mesh.b_edges])
     init_E = ricciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
+    #print(np.abs(edgelenConstraints(np.exp(cp.u), cp._eta, mesh.b_edges, init_boundary_len)).mean())
 
     start = time.time()
     if args.optimizer == "sgd":
@@ -572,17 +607,23 @@ if __name__ == "__main__":
     elif args.optimizer == "newton":
         cp.ricci_flow(target_K=K, free_verts=UfreeV, target_u=init_u, dt=args.learning_rate, thresh=args.gtol, use_hess=True, verbose=args.verbose)
     else:
-        cp.ricci_flow_op(K, KspecifiedV, UfreeV, target_u=init_u, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, verbose=args.verbose)
+        # fix edge
+        cp.ricci_flow_op(K, KspecifiedV, mesh.free_verts, target_l=init_boundary_len, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, verbose=args.verbose)
+        # fix u
+        #cp.ricci_flow_op(K, KspecifiedV, UfreeV, target_u=init_u, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, verbose=args.verbose)
     print ("{} sec".format(time.time() - start))
 
     final_E = ricciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
     print("approx. Ricci Energy initial: {}, final: {}".format(np.abs(init_E**2).sum(),np.abs(final_E**2).sum() ))
-    print("boundary error in circle packing {}".format(np.abs(cp_boundary_len-init_boundary_len).sum()))
-
-    edgedata = np.array( [[i,j,l] for (i,j), l in cp._l.items()] )
+    if len(init_boundary_len)>0:
+        final_boundary_E = np.abs(edgelenConstraints(np.exp(cp.u), cp._eta, mesh.b_edges, init_boundary_len)).mean()
+        print("boundary^2 MAE: CP {}, final {}".format(np.abs(cp_boundary_len**2-init_boundary_len**2).mean(),final_boundary_E))
+    edgedata = np.array( [[i,j,cp.scale_factor*l] for (i,j), l in cp._l.items()] )
     np.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')
+    etadata = np.array( [[i,j,l] for (i,j), l in cp._eta.items()] )
+    np.savetxt(fn+"_eta.csv", etadata,delimiter=",",fmt='%f')
     sns.violinplot(y=cp._K[KspecifiedV], cut=0)
-    print("total curvature error: {}".format(np.abs(cp._K[KspecifiedV]-K[KspecifiedV]).sum() ))
+    print("curvature MAE: {}".format(np.abs(cp._K[KspecifiedV]-K[KspecifiedV]).mean() ))
     ## curvature error
     #edgelen, edge_map = cp.enumerate_edges()
     #print(np.abs(curvatureError(edgelen, edge_map, K, KspecifiedV, mesh)).sum())
@@ -600,9 +641,9 @@ if __name__ == "__main__":
 
     if args.embed:
         dn = os.path.dirname(__file__)
-        cmd = "python {} {} -v {}".format(os.path.join(dn,"metric_embed.py"), fn+".ply", args.verbose)
+        cmd = "python {} {} -v {} -o {}".format(os.path.join(dn,"metric_embed.py"), fn+".ply", args.verbose, args.outdir)
         print("\n",cmd)
         subprocess.call(cmd, shell=True)
-        cmd = "python {} {}".format(os.path.join(dn,"evaluation.py"),fn+"_final.ply")
+        cmd = "python {} {} -o {}".format(os.path.join(dn,"evaluation.py"),fn+"_final.ply", args.outdir)
         print("\n",cmd)
         subprocess.call(cmd, shell=True)
