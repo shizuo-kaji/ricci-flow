@@ -28,9 +28,11 @@ def boundary_error(x,cx,fixed_vert_idx):
     return((v[fixed_vert_idx]-cx).ravel())
 
 # quick-dirty convexity
-def convexity_error(x,mesh):
+def convexity_error(x,mesh, beta=1.0):
     v = np.reshape(x[:-1],(-1,3))
-    return(np.maximum(0,np.array([-v[i,2]+v[mesh.adj_vert[i],2].mean() for i in mesh.free_verts])))
+    #return(np.maximum(0,np.array([-v[i,2]+v[mesh.adj_vert[i],2].mean() for i in mesh.free_verts])))
+    u = np.array([-v[i,2]+v[mesh.adj_vert[i],2].mean() for i in mesh.free_verts])
+    return(u/(1+np.exp(-beta*u)))
 
 #########################
 parser = argparse.ArgumentParser(description='embedding of metric graphs')
