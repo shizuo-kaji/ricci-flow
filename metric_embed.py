@@ -146,7 +146,7 @@ beta = res.x[-1]
 vert2=np.reshape(res.x[:-1],(-1,3))
 #print(vert2[:,2].min())
 
-print("beta: {}, cost: {}, boundary MAE: {}".format(beta, res.fun.sum(), (np.sqrt(np.sum( (fixed_coords-vert2[args.fixed_vert])**2, axis=1 )) ).mean()  ))
+print("beta: {}, cost: {}, boundary MAE: {}".format(beta, np.abs(res.cost).sum(), (np.sqrt(np.sum( (fixed_coords-vert2[args.fixed_vert])**2, axis=1 )) ).mean()  ))
 
 # output
 bfn = os.path.basename(fn)
@@ -154,9 +154,3 @@ bfn = os.path.join(args.outdir,bfn)
 np.savetxt(bfn+"_edge_scaled.csv",np.hstack([inedge,np.sqrt(beta*edgelen2[:,np.newaxis])]),delimiter=",",fmt="%i,%i,%f")
 #np.savetxt(bfn+"_final.txt",vert2)
 save_ply(vert2,face,bfn+"_final.ply")
-
-mesh = TriangleMesh(vert2,face)
-g = DiscreteRiemannianMetric(mesh, mesh.lengths)
-sns.violinplot(y=[g.curvature(i) for i in mesh.verts], cut=0)
-plt.savefig(bfn+"_curvature_final.png")
-plt.close()

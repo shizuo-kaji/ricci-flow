@@ -236,11 +236,13 @@ class DiscreteRiemannianMetric(object):
         j,k = face - set([vert])
         return self._theta[(vert,j,k)]
 
-    def angle_array(self):
+    def angle_array(self, _idx=None):       
+        idx = set() if _idx is None else _idx
         U = []
         for f in self._mesh.faces:
             for v in f:
-                U.append(self.angle(f,v))
+                if v not in idx:
+                    U.append(self.angle(f,v))
         return(np.array(U))
 
     def compute_angle(self, face, vert):
@@ -541,12 +543,13 @@ if __name__ == "__main__":
         plydata = PlyData.read(args.input)
         v = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
         #v[:,2]=0 ## flatten for experiment
-        print(v[:,2].min(),v[:,2].max())
+        #print(v[:,2].min(),v[:,2].max())
         f = []
         for poly in plydata['face']['vertex_indices']:
             for face in triangulate(poly):
                 f.append(face)
 
+#    print(np.where(np.logical_or(np.maximum(v[:,0],v[:,1])>28,np.minimum(v[:,0],v[:,1])<2)))
     save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply")
     mesh = TriangleMesh(v,f)
     g = DiscreteRiemannianMetric(mesh, mesh.lengths)
@@ -559,6 +562,19 @@ if __name__ == "__main__":
     if args.target_curvature:
         tc = np.loadtxt(args.target_curvature,delimiter=",")
         K[tc[:,0].astype(np.uint32)]=tc[:,1]
+    # vertices with specified K
+        KspecifiedV = np.where(K<4*np.pi)[0]
+    else:
+        if args.leave_boundary:
+            KspecifiedV = mesh.free_verts
+        else:
+            KspecifiedV = mesh.verts
+    # vertices on which u (radius) can be dealt with as free variables
+    if args.leave_boundary:
+        UfreeV = mesh.free_verts
+    else:
+        UfreeV = mesh.verts
+
     # magic number K=100 indicates K of the vertex stays unchanged
     KfixV = (K==100)
     K[KfixV] = g._K[KfixV] 
@@ -576,13 +592,6 @@ if __name__ == "__main__":
         K[KfreeV] = uK
         print("target K set to {} uniformly at {} vertices".format(uK,KfreeV.sum()))
 
-    # vertices with specified K
-    if args.leave_boundary:
-        KspecifiedV = mesh.free_verts
-        UfreeV = mesh.free_verts
-    else:
-        KspecifiedV = mesh.verts
-        UfreeV = mesh.verts
 
     print("#V: %s, #E: %s, #F: %s, #bV: %s, Min vertex valence: %s" % (len(mesh.verts),len(mesh.edges),len(mesh.faces), len(mesh.b_verts), mesh.min_valence()))
     print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/np.pi))
@@ -622,13 +631,12 @@ if __name__ == "__main__":
     np.savetxt(fn+"_edge.csv", edgedata,delimiter=",",fmt='%i,%i,%f')
     etadata = np.array( [[i,j,l] for (i,j), l in cp._eta.items()] )
     np.savetxt(fn+"_eta.csv", etadata,delimiter=",",fmt='%f')
-    sns.violinplot(y=cp._K[KspecifiedV], cut=0)
     print("curvature MAE: {}".format(np.abs(cp._K[KspecifiedV]-K[KspecifiedV]).mean() ))
+    sns.violinplot(y=cp._K[KspecifiedV], cut=0)
     ## curvature error
     #edgelen, edge_map = cp.enumerate_edges()
     #print(np.abs(curvatureError(edgelen, edge_map, K, KspecifiedV, mesh)).sum())
-
-    plt.savefig(fn+"_curvature_ricci.png")
+    plt.savefig(fn+"_curvature_dmat.png")
     plt.close()
 
     # save intermediate files for later stages
@@ -641,7 +649,7 @@ if __name__ == "__main__":
 
     if args.embed:
         dn = os.path.dirname(__file__)
-        cmd = "python {} {} -v {} -o {}".format(os.path.join(dn,"metric_embed.py"), fn+".ply", args.verbose, args.outdir)
+        cmd = "python {} {} -v {} -o {} -gt {} -lv {}".format(os.path.join(dn,"metric_embed.py"), fn+".ply", args.verbose, args.outdir, args.gtol, args.lambda_bd)
         print("\n",cmd)
         subprocess.call(cmd, shell=True)
         cmd = "python {} {} -o {}".format(os.path.join(dn,"evaluation.py"),fn+"_final.ply", args.outdir)
