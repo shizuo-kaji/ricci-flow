@@ -23,7 +23,7 @@ def isfloat(string):
     except ValueError:
         return False
 
-def ricciEnergy(r, eta, targetK, KspecifiedV, mesh):
+def modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
     K = np.full(len(r),2*np.pi)
     K[mesh.b_verts] = np.pi
     for i,j,k in mesh.faces:
@@ -34,6 +34,58 @@ def ricciEnergy(r, eta, targetK, KspecifiedV, mesh):
         K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
         K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
     return(K[KspecifiedV]-targetK[KspecifiedV])
+
+# TODO: not tested
+def grad_modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
+    n = len(mesh.verts)
+    l = dict()
+    for (i,j) in mesh.edges:
+        l[i,j] = np.sqrt(2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2)
+    theta = dict()
+    for face in mesh.faces:
+        for i,(j,k) in partition_face(face):
+            other_v = list(face - set([i]))
+            a = l[i, other_v[0]]
+            b = l[i, other_v[1]]
+            c = l[other_v]
+            try:   ## this is faster than np.clip or np.nan_to_num
+                theta=np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
+            except FloatingPointError:
+                theta=0.0001
+            theta[(i,j,k)] = theta
+            theta[(i,k,j)] = theta
+    H = dict()
+    for face in mesh.faces:
+        i,j,k = face
+        A = .5*l[i,j]*l[i,k]*np.sin(theta[(i,j,k)])       
+        L = np.diag((l[j,k],l[i,k],l[i,j]))
+        Linv = np.diag((1/l[j,k],1/l[i,k],1/l[i,j]))
+        tau = lambda i,j,k: .5*(l[j,k]**2 + (r[j]**2) - (r[k]**2))
+        D = np.array(
+            ((0,                tau(i,j,k), tau(i,k,j)),
+             (tau(j,i,k), 0,                tau(j,k,i)),
+             (tau(k,i,j), tau(k,j,i), 0               )
+         ))
+        def th(i):
+            j,k = face - set([i])
+            return theta[(i,j,k)]
+        Theta = np.cos(np.array(
+            ((np.pi,            th(k), th(j)),
+             (th(k), np.pi,            th(i)),
+             (th(j), th(i), np.pi           )
+         )))
+
+        Tijk = -.5/A * (L.dot(Theta).dot(Linv).dot(D))
+        for a,row in zip((i,j,k), Tijk):
+            for b,dtheta in zip((i,j,k), row):
+                if (a,b) in H:
+                    H[a,b] += dtheta
+                else:
+                    H[a,b] = dtheta
+    Hm = sparse.dok_matrix((n,n))
+    for (j,i), val in H.items():
+        Hm[i,j] = 2*(K[i]-targetK[i])*val*r[j]
+    return Hm.tocsr()[KspecifiedV,:]
 
 def fixConstraints(x,indices,value):
     return(x[indices]-value)
@@ -52,6 +104,7 @@ def curvatureError(edgelen, edge_map, targetK, KspecifiedV, mesh):
         K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
         K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
     return(K[KspecifiedV]-targetK[KspecifiedV])
+
 
 class IdentityDictMap(object):
     def __init__(self, output=1, domain=None):
@@ -432,7 +485,6 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             L = np.diag((self._l[j,k],self._l[i,k],self._l[i,j]))
             D = self._D(self._tau,i,j,k)
             Theta = self._Theta(face)
-
             Tijk = -.5/A * (L.dot(Theta).dot(inv(L)).dot(D))
             for a,row in zip((i,j,k), Tijk):
                 for b,dtheta in zip((i,j,k), row):
@@ -441,13 +493,9 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                     else:
                         H[a,b] = dtheta
         Hm = sparse.dok_matrix((n,n))
-        for (du_i,dtheta_j), val in H.items():
-            Hm[du_i, dtheta_j] = val
+        for (du_i,dK_j), val in H.items():
+            Hm[du_i, dK_j] = val
         return Hm.tocsr()
-        # for a,row in zip((i,j,k), Tijk):
-        #     for b,dtheta in zip((i,j,k), row):
-        #         H[a,b] += dtheta
-        # return H
 
     def ricci_flow(self, target_K=0, free_verts=None, target_u=0, dt=0.05, thresh=1e-4, use_hess=False, verbose=1):
         DeltaK = self._K - target_K
@@ -484,18 +532,18 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             w = np.sqrt(alpha*len(KspecifiedV)/max(1,len(target_l)))
         if opt_target=="conformalFactor":
             if target_l is None:
-                target = lambda x: np.concatenate( [ricciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, target_u[UfixV])] )
+                target = lambda x: np.concatenate( [modRicciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, target_u[UfixV])] )
             else:
-                target = lambda x: np.concatenate( [ricciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(np.exp(x), self._eta, self._mesh.b_edges, target_l)] )
+                target = lambda x: np.concatenate( [modRicciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(np.exp(x), self._eta, self._mesh.b_edges, target_l)] )
                 #print(target(self._gamma),edgelenConstraints(np.exp(self.u), self._eta, self._mesh.b_edges, target_l))
             self.u = least_squares(target, self.u, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x
             self.update()
         elif opt_target=="radius":
             if target_l is None:
                 boundary_r = np.exp(target_u)
-                target = lambda x: np.concatenate( [ricciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, boundary_r[UfixV])] )
+                target = lambda x: np.concatenate( [modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, boundary_r[UfixV])] )
             else:
-                target = lambda x: np.concatenate( [ricciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(x, self._eta, self._mesh.b_edges, target_l)] )
+                target = lambda x: np.concatenate( [modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(x, self._eta, self._mesh.b_edges, target_l)] )
             self.u = np.log(least_squares(target, self._gamma, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x)
             self.update()
         elif opt_target=="edge":
@@ -607,7 +655,7 @@ if __name__ == "__main__":
     
     init_u = cp.u.copy()
     cp_boundary_len = np.array([cp._l[i,j] for i,j in mesh.b_edges])
-    init_E = ricciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
+    init_E = modRicciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
     #print(np.abs(edgelenConstraints(np.exp(cp.u), cp._eta, mesh.b_edges, init_boundary_len)).mean())
 
     start = time.time()
@@ -622,8 +670,8 @@ if __name__ == "__main__":
         #cp.ricci_flow_op(K, KspecifiedV, UfreeV, target_u=init_u, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, verbose=args.verbose)
     print ("{} sec".format(time.time() - start))
 
-    final_E = ricciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
-    print("approx. Ricci Energy initial: {}, final: {}".format(np.abs(init_E**2).sum(),np.abs(final_E**2).sum() ))
+    final_E = modRicciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
+    print("modified Ricci Energy initial: {}, final: {}".format(np.abs(init_E**2).sum(),np.abs(final_E**2).sum() ))
     if len(init_boundary_len)>0:
         final_boundary_E = np.abs(edgelenConstraints(np.exp(cp.u), cp._eta, mesh.b_edges, init_boundary_len)).mean()
         print("boundary^2 MAE: CP {}, final {}".format(np.abs(cp_boundary_len**2-init_boundary_len**2).mean(),final_boundary_E))
