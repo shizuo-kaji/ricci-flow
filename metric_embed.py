@@ -109,7 +109,7 @@ parser.add_argument('--initial_point', '-ip', default=None, help='Path to a ply 
 parser.add_argument('--edge_length', '-el', default=None, help='Path to a csv specifying edge length')
 parser.add_argument('--boundary_vertex', '-bv', default=None, help='Path to a csv specifying boundary position')
 parser.add_argument('--inner_edge', '-ie', default=None, help='indices of inner edges')
-parser.add_argument('--optimiser', '-op', default='trf',help='method for optimisation')
+parser.add_argument('--optimizer', '-op', default='trf',help='method for optimisation')
 parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
 parser.add_argument('--lambda_bdvert', '-lv', type=float, default=1.0, help="weight for boundary constraint")
 parser.add_argument('--lambda_convex', '-lc', type=float, default=0, help="weight for convexity constraint")
@@ -189,7 +189,7 @@ else:
 
 wb = np.sqrt(args.lambda_bdvert*len(edgelen2)/max(1,len(args.fixed_vert)))
 wc = np.sqrt(args.lambda_convex*len(edgelen2)/max(1,len(vert)))
-if args.optimiser in ["lm","trf"]:
+if args.optimizer in ["lm","trf"]:
     if args.lambda_convex > 0 and len(fixed_coords)>0 and wb>0:
         target = lambda x: np.concatenate([length_error(x,edgelen2,inedge,args.fixed_beta), wb*boundary_error(x,fixed_coords,args.fixed_vert) , wc*convexity_error(x,mesh)])
         jac = lambda x: sparse.vstack([grad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*grad_boundary_error(x,fixed_coords,args.fixed_vert), wc*grad_convexity_error(x,mesh)])
@@ -199,24 +199,24 @@ if args.optimiser in ["lm","trf"]:
     else:
         target = lambda x: length_error(x,edgelen2,inedge,args.fixed_beta)
         jac = lambda x: grad_length_error(x,edgelen2,inedge,args.fixed_beta)
-    if args.optimiser == "lm":
+    if args.optimizer == "lm":
         jac = '2-point'
 
 #    bd = (np.full(len(x0),-np.inf), np.full(len(x0),np.inf))
 #    bd[0][2::3] = 0  ## set lower bound of z
-#    res = least_squares(target, x0, bounds=bd, verbose=2, method=args.optimiser, gtol=args.gtol)
-    #res = least_squares(target, x0, jac=jacobian(target), verbose=2, method=args.optimiser, gtol=args.gtol)
+#    res = least_squares(target, x0, bounds=bd, verbose=2, method=args.optimizer, gtol=args.gtol)
+    #res = least_squares(target, x0, jac=jacobian(target), verbose=2, method=args.optimizer, gtol=args.gtol)
 #    jac = '2-point'
-    res = least_squares(target, x0, jac=jac, verbose=args.verbose, method=args.optimiser, gtol=args.gtol)
+    res = least_squares(target, x0, jac=jac, verbose=args.verbose, method=args.optimizer, gtol=args.gtol)
 else:
     import autograd.numpy as np
     from autograd import grad, jacobian, hessian
     # jacobian and hessian by autograd
     target = lambda x: np.sum(length_error(x,edgelen2,inedge)**2) + wb**2*np.sum(boundary_error(x,fixed_coords,args.fixed_vert)**2)
-    if args.optimiser in ['CG','BFGS']:
-        res = minimize(target, x0, method = args.optimiser,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target))
+    if args.optimizer in ['CG','BFGS']:
+        res = minimize(target, x0, method = args.optimizer,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target))
     else:
-        res = minimize(target, x0, method = args.optimiser,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target), hess=hessian(target))
+        res = minimize(target, x0, method = args.optimizer,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target), hess=hessian(target))
 
 elapsed_time = time.time() - start
 print ("elapsed_time:{0}".format(elapsed_time) + "[sec]")

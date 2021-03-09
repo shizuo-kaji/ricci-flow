@@ -36,24 +36,31 @@ def modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
     return(K[KspecifiedV]-targetK[KspecifiedV])
 
 # TODO: not tested
-def grad_modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
+def grad_modRicciEnergy(x, eta, targetK, KspecifiedV, mesh, is_r=True):
+    if is_r:
+        r = x
+    else:
+        r = np.exp(x)
     n = len(mesh.verts)
+    # length
     l = dict()
     for (i,j) in mesh.edges:
         l[i,j] = np.sqrt(2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2)
+        l[j,i] = l[i,j]
+    # angle
     theta = dict()
     for face in mesh.faces:
         for i,(j,k) in partition_face(face):
-            other_v = list(face - set([i]))
-            a = l[i, other_v[0]]
-            b = l[i, other_v[1]]
-            c = l[other_v]
+            a = l[i,j]
+            b = l[i,k]
+            c = l[j,k]
             try:   ## this is faster than np.clip or np.nan_to_num
-                theta=np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
+                atheta=np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
             except FloatingPointError:
-                theta=0.0001
-            theta[(i,j,k)] = theta
-            theta[(i,k,j)] = theta
+                atheta=0.0001
+            theta[(i,j,k)] = atheta
+            theta[(i,k,j)] = atheta
+    # dK/du
     H = dict()
     for face in mesh.faces:
         i,j,k = face
@@ -82,18 +89,54 @@ def grad_modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
                     H[a,b] += dtheta
                 else:
                     H[a,b] = dtheta
+    # curvature
+    K = np.full(len(r),2*np.pi)
+    K[mesh.b_verts] = np.pi
+    for i,j,k in mesh.faces:
+        Li = (2*r[j]*r[k]*eta[j,k] + r[j]**2 + r[k]**2)
+        Lj = (2*r[k]*r[i]*eta[k,i] + r[k]**2 + r[i]**2)
+        Lk = (2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2)
+        K[i] -= np.arccos(np.clip((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)),-1.0,1.0))
+        K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
+        K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
+    #
     Hm = sparse.dok_matrix((n,n))
-    for (j,i), val in H.items():
-        Hm[i,j] = 2*(K[i]-targetK[i])*val*r[j]
+    for (i,j), val in H.items(): # H[i,j] = dK[i]/du[j]
+        if is_r:
+            Hm[i,j] = -val/r[j]
+        else:
+            Hm[i,j] = -val
+        #Hm[i,j] = -2*(K[i]-targetK[i])*val*r[j]
     return Hm.tocsr()[KspecifiedV,:]
 
 def fixConstraints(x,indices,value):
     return(x[indices]-value)
 
+def grad_fixConstraints(x,indices,value):
+    Hm = sparse.dok_matrix((len(indices),len(x)))
+    for i,j in enumerate(indices):
+        Hm[i,j] = 1
+    return Hm.tocsr()
+
 def edgelenConstraints(r,eta,fixed_edges,edgelen):
     L2 = np.array([(2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2) for (i,j) in fixed_edges])
 #    print(np.abs(L2 - edgelen**2).mean())
     return(L2 - edgelen**2)
+
+def grad_edgelenConstraints(x,eta,fixed_edges,edgelen, is_r=True):
+    if is_r:
+        r = x
+    else:
+        r = np.exp(x)
+    Hm = sparse.dok_matrix((len(fixed_edges),len(r)))
+    for k,(i,j) in enumerate(fixed_edges):
+        if is_r:
+            Hm[k,i] = 2*r[j]*eta[i,j] + 2*r[i]
+            Hm[k,j] = 2*r[i]*eta[i,j] + 2*r[j]
+        else:
+            Hm[k,i] = (2*r[j]*eta[i,j] + 2*r[i])*r[i]
+            Hm[k,j] = (2*r[i]*eta[i,j] + 2*r[j])*r[j]
+    return Hm.tocsr()
 
 def curvatureError(edgelen, edge_map, targetK, KspecifiedV, mesh):
     K = np.full(len(mesh.verts),2*np.pi)
@@ -510,6 +553,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
                     print("use_hess and leave_boundary together are not implemented!")
                     exit()
                 H = self.hessian()
+                #H = grad_modRicciEnergy(self._gamma, self._eta, target_K, mesh.verts, mesh)
                 deltau = sparse.linalg.lsqr(H, DeltaK)[0]
                 self.u += dt*deltau
             else:
@@ -523,7 +567,7 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
             niter += 1
         return self
 
-    def ricci_flow_op(self, targetK, KspecifiedV, UfreeV, target_u=None, target_l=None, alpha=1.0, xtol=1e-4, opt_target="conformalFactor", optimizer="lm", verbose=1):
+    def ricci_flow_op(self, targetK, KspecifiedV, UfreeV, target_u=None, target_l=None, alpha=1.0, xtol=1e-4, opt_target="conformalFactor", optimizer="lm", no_jac=False, verbose=1):
         UfixV = list(set(self._mesh.verts)-set(UfreeV))
         #print(len(UfreeV),len(UfixV),len(cp.u))
         if target_l is None:
@@ -533,18 +577,26 @@ class CirclePackingMetric(DiscreteRiemannianMetric):
         if opt_target=="conformalFactor":
             if target_l is None:
                 target = lambda x: np.concatenate( [modRicciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, target_u[UfixV])] )
+                jac = lambda x: sparse.vstack([grad_modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh, is_r=False), w*grad_fixConstraints(x, UfixV, target_u[UfixV])])
             else:
                 target = lambda x: np.concatenate( [modRicciEnergy(np.exp(x), self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(np.exp(x), self._eta, self._mesh.b_edges, target_l)] )
+                jac = lambda x: sparse.vstack([grad_modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh, is_r=False), w*grad_edgelenConstraints(x, self._eta, self._mesh.b_edges, target_l, is_r=False)])
                 #print(target(self._gamma),edgelenConstraints(np.exp(self.u), self._eta, self._mesh.b_edges, target_l))
-            self.u = least_squares(target, self.u, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x
+            if no_jac:
+                jac = '2-point'
+            self.u = least_squares(target, self.u, jac=jac, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x
             self.update()
         elif opt_target=="radius":
             if target_l is None:
                 boundary_r = np.exp(target_u)
                 target = lambda x: np.concatenate( [modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*fixConstraints(x, UfixV, boundary_r[UfixV])] )
+                jac = lambda x: sparse.vstack([grad_modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*grad_fixConstraints(x, UfixV, target_u[UfixV])])
             else:
                 target = lambda x: np.concatenate( [modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*edgelenConstraints(x, self._eta, self._mesh.b_edges, target_l)] )
-            self.u = np.log(least_squares(target, self._gamma, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x)
+                jac = lambda x: sparse.vstack([grad_modRicciEnergy(x, self._eta, targetK, KspecifiedV, self._mesh), w*grad_edgelenConstraints(x, self._eta, self._mesh.b_edges, target_l)])
+            if no_jac:
+                jac = '2-point'
+            self.u = np.log(least_squares(target, self._gamma, jac=jac, verbose=verbose, method=optimizer, xtol=xtol, gtol=xtol).x)
             self.update()
         elif opt_target=="edge":
             edgelen, edge_map = self.enumerate_edges()
@@ -568,6 +620,7 @@ if __name__ == "__main__":
     parser.add_argument('--lambda_bd', '-lv', type=float, default=1.0, help="weight for boundary constraint")
     parser.add_argument('--method', '-m', default='inversive', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta, or a csv file name containing values for eta')
     parser.add_argument('--opt_target', '-ot', default='conformalFactor', choices=['conformalFactor','radius','edge'], help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
+    parser.add_argument('--preserved_target', '-pt', default='edge', choices=['radius','edge'], help='specify which to preserve radius or edge on the boundary')
     parser.add_argument('--alpha', '-a', default=-1, type=float, help='multiplication factor of the radius of Thurston circle packing (set to negative for automatic detection)')
     parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
     parser.add_argument('--optimizer', '-op', default='trf', choices=['sgd','newton','lm','trf'], help='optimiser')
@@ -576,6 +629,7 @@ if __name__ == "__main__":
     parser.add_argument('--target_curvature_boundary', '-Kb', default=10, type=float, help='target gaussian curvature value on the boundary vertices (if >2pi, boundary curvature values are fixed to the ones of the initial mesh)')
     parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
     parser.add_argument('--embed', '-e', action='store_true',help='perform embedding as well')
+    parser.add_argument('--no_jac', '-nj', action='store_true',help='do not use jaccobian')
     parser.add_argument('--verbose', '-v', type=int, default = 2)
     args = parser.parse_args()
 
@@ -611,7 +665,7 @@ if __name__ == "__main__":
         tc = np.loadtxt(args.target_curvature,delimiter=",")
         K[tc[:,0].astype(np.uint32)]=tc[:,1]
     # vertices with specified K
-        KspecifiedV = np.where(K<4*np.pi)[0]
+        KspecifiedV = np.where(K<2*np.pi)[0]
     else:
         if args.leave_boundary:
             KspecifiedV = mesh.free_verts
@@ -642,6 +696,7 @@ if __name__ == "__main__":
 
 
     print("#V: %s, #E: %s, #F: %s, #bV: %s, Min vertex valence: %s" % (len(mesh.verts),len(mesh.edges),len(mesh.faces), len(mesh.b_verts), mesh.min_valence()))
+    print("#KspecifiedV: {}, #UfreeV: {}".format(len(KspecifiedV),len(UfreeV)))
     print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/np.pi))
 
     # ricci flow
@@ -664,10 +719,12 @@ if __name__ == "__main__":
     elif args.optimizer == "newton":
         cp.ricci_flow(target_K=K, free_verts=UfreeV, target_u=init_u, dt=args.learning_rate, thresh=args.gtol, use_hess=True, verbose=args.verbose)
     else:
-        # fix edge
-        cp.ricci_flow_op(K, KspecifiedV, mesh.free_verts, target_l=init_boundary_len, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, verbose=args.verbose)
-        # fix u
-        #cp.ricci_flow_op(K, KspecifiedV, UfreeV, target_u=init_u, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, verbose=args.verbose)
+        if args.optimizer == "lm":
+            args.no_jac = True
+        if args.preserved_target == "edge":
+            cp.ricci_flow_op(K, KspecifiedV, UfreeV, target_l=init_boundary_len, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, no_jac=args.no_jac, verbose=args.verbose)
+        else:
+            cp.ricci_flow_op(K, KspecifiedV, UfreeV, target_u=init_u, alpha=args.lambda_bd, xtol=args.gtol, opt_target=args.opt_target, optimizer=args.optimizer, no_jac=args.no_jac, verbose=args.verbose)
     print ("{} sec".format(time.time() - start))
 
     final_E = modRicciEnergy(cp._gamma, cp._eta, K, KspecifiedV, mesh)
