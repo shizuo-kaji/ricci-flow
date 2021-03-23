@@ -35,7 +35,6 @@ def modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
         K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
     return(K[KspecifiedV]-targetK[KspecifiedV])
 
-# TODO: not tested
 def grad_modRicciEnergy(x, eta, targetK, KspecifiedV, mesh, is_r=True):
     if is_r:
         r = x
@@ -159,8 +158,9 @@ class IdentityDictMap(object):
         return self._o
 
 def save_ply(vert,face,fname):
+    nf = len(face[0])
     el1 = PlyElement.describe(np.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f8'), ('y', 'f8'),('z', 'f8')]), 'vertex')
-    el2 = PlyElement.describe(np.array([([x[0],x[1],x[2]], 0) for x in face],dtype=[('vertex_indices', 'i4', (3,)), ('red', 'u1')]), 'face')
+    el2 = PlyElement.describe(np.array([([*x], 0) for x in face],dtype=[('vertex_indices', 'i4', (nf,)), ('red', 'u1')]), 'face')
     PlyData([el1,el2], text=True).write(fname)
 
 def partition_face(face):

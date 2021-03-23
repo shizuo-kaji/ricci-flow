@@ -76,6 +76,7 @@ def convexity_error(x,mesh):
     return(u/(1+np.exp(-u)))
 
 def grad_convexity_error(x,mesh):
+    # Swish: f'(x) = β f(βx) + σ(βx)(1 – β f(βx))
     v = np.reshape(x[:-1],(-1,3))
     u = np.array([-v[i,2]+v[mesh.adj_vert[i],2].mean() for i in mesh.free_verts])
     f = u/(1+np.exp(-u))
@@ -192,21 +193,28 @@ wc = np.sqrt(args.lambda_convex*len(edgelen2)/max(1,len(vert)))
 if args.optimizer in ["lm","trf"]:
     if args.lambda_convex > 0 and len(fixed_coords)>0 and wb>0:
         target = lambda x: np.concatenate([length_error(x,edgelen2,inedge,args.fixed_beta), wb*boundary_error(x,fixed_coords,args.fixed_vert) , wc*convexity_error(x,mesh)])
-        jac = lambda x: sparse.vstack([grad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*grad_boundary_error(x,fixed_coords,args.fixed_vert), wc*grad_convexity_error(x,mesh)])
+        if args.optimizer == "lm":
+            jac = lambda x: np.vstack([dgrad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*dgrad_boundary_error(x,fixed_coords,args.fixed_vert), wc*dgrad_convexity_error(x,mesh)]).tolist()
+        else:
+            jac = lambda x: sparse.vstack([grad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*grad_boundary_error(x,fixed_coords,args.fixed_vert), wc*grad_convexity_error(x,mesh)])
     elif len(fixed_coords)>0 and wb>0:
         target = lambda x: np.concatenate([length_error(x,edgelen2,inedge,args.fixed_beta), wb*boundary_error(x,fixed_coords,args.fixed_vert)])
-        jac = lambda x: sparse.vstack([grad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*grad_boundary_error(x,fixed_coords,args.fixed_vert)])
+        if args.optimizer == "lm":
+            jac = lambda x: np.vstack([dgrad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*dgrad_boundary_error(x,fixed_coords,args.fixed_vert)]).tolist()
+        else:
+            jac = lambda x: sparse.vstack([grad_length_error(x,edgelen2,inedge,args.fixed_beta), wb*grad_boundary_error(x,fixed_coords,args.fixed_vert)])
     else:
         target = lambda x: length_error(x,edgelen2,inedge,args.fixed_beta)
-        jac = lambda x: grad_length_error(x,edgelen2,inedge,args.fixed_beta)
-    if args.optimizer == "lm":
-        jac = '2-point'
+        if args.optimizer == "lm":
+            jac = lambda x: np.vstack([dgrad_length_error(x,edgelen2,inedge,args.fixed_beta)]).tolist()
+        else:
+            jac = lambda x: grad_length_error(x,edgelen2,inedge,args.fixed_beta)
 
+#    jac = '2-point'
+# box constraint
 #    bd = (np.full(len(x0),-np.inf), np.full(len(x0),np.inf))
 #    bd[0][2::3] = 0  ## set lower bound of z
 #    res = least_squares(target, x0, bounds=bd, verbose=2, method=args.optimizer, gtol=args.gtol)
-    #res = least_squares(target, x0, jac=jacobian(target), verbose=2, method=args.optimizer, gtol=args.gtol)
-#    jac = '2-point'
     res = least_squares(target, x0, jac=jac, verbose=args.verbose, method=args.optimizer, gtol=args.gtol)
 else:
     import autograd.numpy as np
@@ -222,7 +230,10 @@ elapsed_time = time.time() - start
 print ("elapsed_time:{0}".format(elapsed_time) + "[sec]")
 
 #%% plot result
-beta = res.x[-1]
+if args.fixed_beta:
+    beta = 1
+else:
+    beta = res.x[-1]
 vert2=np.reshape(res.x[:-1],(-1,3))
 #print(vert2[:,2].min())
 
