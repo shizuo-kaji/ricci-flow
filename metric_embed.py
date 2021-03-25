@@ -118,6 +118,7 @@ parser.add_argument('--gtol', '-gt', type=float, default=1e-8, help="stopping cr
 parser.add_argument('--verbose', '-v', type=int, default = 2)
 parser.add_argument('--fixed_beta', '-fb', action='store_true',help='fix (not optimise) beta (distance scaling)')
 parser.add_argument('--evaluation', '-e', action='store_true',help='perform evaluation as well')
+parser.add_argument('--jitter', '-j', type=float, default=0, help='jitter initial coordinates to make them in general position.')
 args = parser.parse_args()
 
 os.makedirs(args.outdir,exist_ok=True)
@@ -160,7 +161,14 @@ if args.boundary_vertex:
 if fixed_coords is None:
     args.lambda_bdvert = 0
     args.fixed_vert =np.array([0])
-    fixed_coords = vert[args.fixed_vert]
+    fixed_coords = vert[args.fixed_vert].copy()
+
+if args.jitter>0:
+    mx, Mx = np.min(vert[:,0]), np.max(vert[:,0])
+    my, My = np.min(vert[:,1]), np.max(vert[:,1])
+    cx, cy = (Mx+mx)/2, (My+my)/2
+    diam = (Mx-cx)**2 + (My-cy)**2
+    vert[:,2] += args.jitter*(Mx-mx)*np.sqrt(diam-(vert[:,0]-cx)**2-(vert[:,1]-cy)**2)
 
 print("\nvertices {}, faces {}, fixed vertices {}".format(len(vert),len(face),len(args.fixed_vert)))
 if len(args.fixed_vert) < 2:
@@ -179,6 +187,7 @@ if args.initial_point is not None:
     x0 = np.concatenate([np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T.ravel(),np.array([1.0])])
 else:
     x0 = np.concatenate([vert.flatten(),np.array([1.0])]) ## last entry is for scaling factor
+
 
 # optimise
 n_iter=0
