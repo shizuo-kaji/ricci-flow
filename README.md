@@ -115,7 +115,7 @@ to obtain the final deformed mesh result/torus_final.ply.
 ## Convexity enforced embedding
 By setting -lc 1 -m lm, a convex embedding is searched for:
 
-    python metric_embed.py result/dome.ply -lc 1 -m lm  
+    python metric_embed.py result/dome.ply -lc 1
 
 Here, convexity means that the z-value at every inner vertex is bigger than the average of the neighbouring vertices.
 
