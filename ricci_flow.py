@@ -750,7 +750,9 @@ if __name__ == "__main__":
     np.savetxt(fn+"_targetCurvature.txt", K)
     if args.leave_boundary: # u of boundary points remain unchanged
         # save boundary coordinates for later stage
-        np.savetxt(fn+"_boundary.csv", np.hstack([np.array(mesh.b_verts)[:,np.newaxis],v[mesh.b_verts]]),delimiter=",", fmt='%i,%f,%f,%f')
+        np.savetxt(fn+"_boundary.csv", np.hstack([np.array(mesh.b_verts)[:,np.newaxis],v[mesh.b_verts],np.ones((len(mesh.b_verts),1))]),delimiter=",", fmt='%i,%f,%f,%f,%f')
+    else:
+        np.savetxt(fn+"_boundary.csv", np.hstack([np.array(mesh.verts)[:,np.newaxis],v[mesh.verts],np.zeros((len(mesh.verts),1))]),delimiter=",", fmt='%i,%f,%f,%f,%f')
 
     if args.embed:
         dn = os.path.dirname(__file__)

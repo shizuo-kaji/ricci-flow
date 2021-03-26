@@ -64,7 +64,7 @@ if args.boundary_vertex:
     bddat = np.loadtxt(args.boundary_vertex,delimiter=",")
     if len(bddat)>0:
         fixed_vert = bddat[:,0].astype(np.uint32)
-        fixed_coords = bddat[:,1:]
+        fixed_coords = bddat[:,1:4]
 if fixed_coords is None:
     fixed_vert =np.array([0])
     fixed_coords = vert[fixed_vert]
@@ -107,6 +107,12 @@ if args.initial_mesh is not None:
     plt.savefig(os.path.join(args.outdir,"curvature_init.png"))
     plt.close()
     np.savetxt(os.path.join(args.outdir,"curvatures_init_target_dmat_final.csv"),np.vstack([g_init._K[KspecifiedV], targetK[KspecifiedV], g_dmat._K[KspecifiedV], g_final._K[KspecifiedV]]).T,fmt='%1.8f',delimiter=",")
+    fc = np.full((len(vert),3),-99.0)
+    fc[fixed_vert]=fixed_coords
+    bd = np.zeros(len(vert))
+    bd[mesh_final.b_verts] = 1
+    header = "id, boundary, K_init, K_target, K_dmat, K_final, fixed_x, fixed_y, fixed_z, x, y, z"
+    np.savetxt(os.path.join(args.outdir,"result_vertex.csv"),np.hstack([np.vstack([np.arange(len(vert)),bd,g_init._K, targetK, g_dmat._K, g_final._K]).T,fc,vert]),fmt='%1.8f',delimiter=",",header=header)
 
 
 # %%
