@@ -50,7 +50,7 @@ face = plydata['face']['vertex_indices']
 edgedat = np.loadtxt(args.edge_length,delimiter=",")
 print("reading edge lengths from ", args.edge_length)
 edgedat = np.array([ [i,j,l] for i,j,l in zip(edgedat[:,0],edgedat[:,1],edgedat[:,2]) if i<j ])
-edgedict = {frozenset([i,j]): l for i,j,l in zip(edgedat[:,0],edgedat[:,1],edgedat[:,2])}
+edgedict = {frozenset([int(i),int(j)]): l for i,j,l in zip(edgedat[:,0],edgedat[:,1],edgedat[:,2])}
 inedge = edgedat[:,:2].astype(np.uint32)
 edgelen = edgedat[:,2]
 #dmat = np.sum((np.expand_dims(vert,axis=0) - np.expand_dims(vert,axis=1))**2,axis=2)
@@ -85,7 +85,10 @@ print("\nvertices {}, faces {}, fixed verts {}, K-specified verts {}".format(len
 
 mesh_final = TriangleMesh(vert,face)
 g_final = DiscreteRiemannianMetric(mesh_final, mesh_final.lengths)
-g_dmat = DiscreteRiemannianMetric(mesh_final, edgedict)
+if len(face[0])==3: ## only for triangular mesh
+    g_dmat = DiscreteRiemannianMetric(mesh_final, edgedict)
+else:
+    g_dmat = g_final
 
 ## conformality
 if args.initial_mesh is not None:

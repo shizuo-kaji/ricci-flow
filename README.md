@@ -3,6 +3,9 @@ Metric deformation by Ricci flow
 written by S. Kaji
 based on the [code](https://github.com/hchapman/ricci-flow) written by Harrison Chapman.
 
+See our paper
+- S. Kaji and J. Zhang, Free-form Design of Discrete Architectural Surfaces by use of Circle Packing, [arXiv:2103.07584](https://arxiv.org/abs/2103.07584)
+
 This program takes 
 - a surface mesh (in .obj or .ply format)
 - a specification of Gaussian curvature (angle defect) for each vertex

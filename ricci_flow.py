@@ -16,6 +16,15 @@ import matplotlib.pyplot as plt
 from scipy.optimize import minimize,NonlinearConstraint,LinearConstraint,least_squares
 import subprocess,sys
 
+
+def acos(x):
+    return np.arccos(x, where=(abs(x)<1), out=np.full_like(x,np.pi))
+    #return np.arccos(np.clip(x,-1.0,1.0))
+    # try:   ## this is faster than np.clip or np.nan_to_num
+    #     atheta=np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
+    # except FloatingPointError:
+    #     atheta=0.0001
+
 def isfloat(string):
     try:
         float(string)
@@ -30,9 +39,9 @@ def modRicciEnergy(r, eta, targetK, KspecifiedV, mesh):
         Li = (2*r[j]*r[k]*eta[j,k] + r[j]**2 + r[k]**2)
         Lj = (2*r[k]*r[i]*eta[k,i] + r[k]**2 + r[i]**2)
         Lk = (2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2)
-        K[i] -= np.arccos(np.clip((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)),-1.0,1.0))
-        K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
-        K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
+        K[i] -= acos((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)))
+        K[j] -= acos((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)))
+        K[k] -= acos((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)))
     return(K[KspecifiedV]-targetK[KspecifiedV])
 
 def grad_modRicciEnergy(x, eta, targetK, KspecifiedV, mesh, is_r=True):
@@ -53,10 +62,7 @@ def grad_modRicciEnergy(x, eta, targetK, KspecifiedV, mesh, is_r=True):
             a = l[i,j]
             b = l[i,k]
             c = l[j,k]
-            try:   ## this is faster than np.clip or np.nan_to_num
-                atheta=np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
-            except FloatingPointError:
-                atheta=0.0001
+            atheta = acos((a**2 + b**2 - c**2)/(2.0*a*b))
             theta[(i,j,k)] = atheta
             theta[(i,k,j)] = atheta
     # dK/du
@@ -95,9 +101,9 @@ def grad_modRicciEnergy(x, eta, targetK, KspecifiedV, mesh, is_r=True):
         Li = (2*r[j]*r[k]*eta[j,k] + r[j]**2 + r[k]**2)
         Lj = (2*r[k]*r[i]*eta[k,i] + r[k]**2 + r[i]**2)
         Lk = (2*r[i]*r[j]*eta[i,j] + r[i]**2 + r[j]**2)
-        K[i] -= np.arccos(np.clip((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)),-1.0,1.0))
-        K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
-        K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
+        K[i] -= acos((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)))
+        K[j] -= acos((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)))
+        K[k] -= acos((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)))
     #
     Hm = sparse.dok_matrix((n,n))
     for (i,j), val in H.items(): # H[i,j] = dK[i]/du[j]
@@ -142,9 +148,9 @@ def curvatureError(edgelen, edge_map, targetK, KspecifiedV, mesh):
     K[mesh.b_verts] = np.pi
     for i,j,k in mesh.faces:
         Li, Lj, Lk = edgelen[edge_map[j,k]]**2,edgelen[edge_map[k,i]]**2,edgelen[edge_map[i,j]]**2
-        K[i] -= np.arccos(np.clip((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)),-1.0,1.0))
-        K[j] -= np.arccos(np.clip((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)),-1.0,1.0))
-        K[k] -= np.arccos(np.clip((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)),-1.0,1.0))
+        K[i] -= acos((Lj+Lk-Li)/(2*np.sqrt(Lj*Lk)))
+        K[j] -= acos((Lk+Li-Lj)/(2*np.sqrt(Lk*Li)))
+        K[k] -= acos((Li+Lj-Lk)/(2*np.sqrt(Li*Lj)))
     return(K[KspecifiedV]-targetK[KspecifiedV])
 
 
@@ -157,10 +163,13 @@ class IdentityDictMap(object):
             raise KeyError()
         return self._o
 
-def save_ply(vert,face,fname):
+def save_ply(vert,face,fname,colour=None):
     nf = len(face[0])
-    el1 = PlyElement.describe(np.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f8'), ('y', 'f8'),('z', 'f8')]), 'vertex')
-    el2 = PlyElement.describe(np.array([([*x], 0) for x in face],dtype=[('vertex_indices', 'i4', (nf,)), ('red', 'u1')]), 'face')
+    if colour is None:
+        el1 = PlyElement.describe(np.array([(x[0],x[1],x[2]) for x in vert],dtype=[('x', 'f8'), ('y', 'f8'),('z', 'f8')]), 'vertex')
+    else:
+        el1 = PlyElement.describe(np.array([(x[0],x[1],x[2],c[0],c[1],c[2]) for (x,c) in zip(vert,colour)],dtype=[('x', 'f8'), ('y', 'f8'),('z', 'f8'),('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]), 'vertex')
+    el2 = PlyElement.describe(np.array([(x, 0) for x in face],dtype=[('vertex_indices', 'i4', (nf,)), ('red', 'u1')]), 'face')
     PlyData([el1,el2], text=True).write(fname)
 
 def partition_face(face):
@@ -196,8 +205,7 @@ def read_obj_file(f):
         elif tok[0] == "f":
             # Throw out normal info for now...
             poly = [int(vstr.split("/")[0])-1 for vstr in tok[1:]]
-            for face in triangulate(poly):
-                faces.append(face)
+            faces.append(poly)
 
     verts = np.array(verts)
     return(verts,faces)
@@ -205,7 +213,9 @@ def read_obj_file(f):
 
 class TriangleMesh(object):
     def __init__(self, vert_coords, faces, edges=None, lengths=None, bg_geom="euclidean"):
-        self.faces = [frozenset(f) for f in faces]
+        self.faces = []
+        for poly in faces:
+            self.faces.extend([frozenset(f) for f in triangulate(poly)])
         if edges is None:
             edges = []
             lengths = dict()
@@ -343,10 +353,7 @@ class DiscreteRiemannianMetric(object):
 
     def compute_angle(self, face, vert):
         a,b,c = self.abc_for_vert(face,vert)
-        try:   ## this is faster than np.clip or np.nan_to_num
-            return np.arccos((a**2 + b**2 - c**2)/(2.0*a*b))
-        except FloatingPointError:
-            return 0.0001
+        return acos((a**2 + b**2 - c**2)/(2.0*a*b))
  #       return(np.arccos( np.clip( (a**2 + b**2 - c**2)/(2.0*a*b), -1.0, 1.0)) )
 
     def curvature(self, vert):
@@ -617,7 +624,7 @@ if __name__ == "__main__":
     parser.add_argument('input', help='Path to an input ply file')
     parser.add_argument('--learning_rate', '-lr', type=float, default=0.1, help='learning rate')
     parser.add_argument('--gtol', '-gt', type=float, default=1e-6, help='stopping criteria for gradient')
-    parser.add_argument('--lambda_bd', '-lv', type=float, default=1.0, help="weight for boundary constraint")
+    parser.add_argument('--lambda_bd', '-lv', type=float, default=0.01, help="weight for boundary constraint")
     parser.add_argument('--method', '-m', default='inversive', help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta, or a csv file name containing values for eta')
     parser.add_argument('--opt_target', '-ot', default='conformalFactor', choices=['conformalFactor','radius','edge'], help='method for Ricci flow: inversive,thurston,thurston2,combinatorial, or a positive number for a constant eta')
     parser.add_argument('--preserved_target', '-pt', default='edge', choices=['radius','edge'], help='specify which to preserve radius or edge on the boundary')
@@ -630,6 +637,7 @@ if __name__ == "__main__":
     parser.add_argument('--target_curvature', '-K', default=None, type=str, help='file containing target gaussian curvature')
     parser.add_argument('--embed', '-e', action='store_true',help='perform embedding as well')
     parser.add_argument('--no_jac', '-nj', action='store_true',help='do not use jaccobian')
+    parser.add_argument('--coloured_ply', '-cp', action='store_true',help='vertices in out PLY are coloured by their curvature')
     parser.add_argument('--verbose', '-v', type=int, default = 2)
     args = parser.parse_args()
 
@@ -646,13 +654,9 @@ if __name__ == "__main__":
         v = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
         #v[:,2]=0 ## flatten for experiment
         #print(v[:,2].min(),v[:,2].max())
-        f = []
-        for poly in plydata['face']['vertex_indices']:
-            for face in triangulate(poly):
-                f.append(face)
+        f = plydata['face']['vertex_indices']
 
 #    print(np.where(np.logical_or(np.maximum(v[:,0],v[:,1])>28,np.minimum(v[:,0],v[:,1])<2)))
-    save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply")
     mesh = TriangleMesh(v,f)
     g = DiscreteRiemannianMetric(mesh, mesh.lengths)
     #print(mesh.b_edges, mesh.b_verts)
@@ -694,11 +698,20 @@ if __name__ == "__main__":
         K[KfreeV] = uK
         print("target K set to {} uniformly at {} vertices".format(uK,KfreeV.sum()))
 
+    if args.coloured_ply:
+        vmin, vmax = np.min(g._K), np.max(g._K)
+        vmin, vmax = 1e-4, 1.5*1e-3
+        colour = np.array(255*plt.cm.bwr((g._K-vmin)/(vmax-vmin)), dtype=np.uint8)
+        save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply", colour)
+        colour = np.array(255*plt.cm.bwr((K-vmin)/(vmax-vmin)), dtype=np.uint8)
+        save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+"_target.ply", colour)
+    else:
+        save_ply(v,np.array([list(x) for x in f], dtype=np.int16),fn+".ply")
 
     print("#V: %s, #E: %s, #F: %s, #bV: %s, Min vertex valence: %s" % (len(mesh.verts),len(mesh.edges),len(mesh.faces), len(mesh.b_verts), mesh.min_valence()))
     print("#KspecifiedV: {}, #UfreeV: {}".format(len(KspecifiedV),len(UfreeV)))
-    print("Mesh chi: %s, global chi: %s, boundary curvature: %s, target total curvature: %s pi" % (mesh.chi(),g.gb_chi(),K[mesh.b_verts].sum(), K.sum()/np.pi))
-
+    print("Mesh chi: %s, global chi: %s, boundary curvature: %s pi, interior curvature: %s pi" % (mesh.chi(),g.gb_chi(),g._K[mesh.b_verts].sum()/np.pi,g._K[mesh.free_verts].sum()/np.pi))
+    print("Target total curvature: %s pi, boundary curvature: %s pi" % (K.sum()/np.pi, K[mesh.b_verts].sum()/np.pi))
     # ricci flow
     init_boundary_len = np.array([mesh.lengths[e] for e in mesh.b_edges])
     #print(norm(v[147]-v[148]),mesh.lengths[frozenset({147,148})],init_boundary_len,mesh.b_edges)

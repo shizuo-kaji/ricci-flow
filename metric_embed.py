@@ -111,12 +111,15 @@ parser.add_argument('--edge_length', '-el', default=None, help='Path to a csv sp
 parser.add_argument('--boundary_vertex', '-bv', default=None, help='Path to a csv specifying boundary position')
 parser.add_argument('--optimizer', '-op', default='trf',help='method for optimisation')
 parser.add_argument('--outdir', '-o', default='result',help='Directory to output the result')
-parser.add_argument('--lambda_bdvert', '-lv', type=float, default=0.01, help="weight for boundary constraint")
+parser.add_argument('--lambda_bdvert', '-lv', type=float, default=0.01, help="weight for boundary position constraint")
+parser.add_argument('--lambda_bdedge', '-le', type=float, default=-1, help="weight for boundary edge length constraint")
 parser.add_argument('--lambda_convex', '-lc', type=float, default=0, help="weight for convexity constraint")
+parser.add_argument('--norm_order', '-no', type=int, default=2, help="norm order for autograd optimisers")
 parser.add_argument('--gtol', '-gt', type=float, default=1e-8, help="stopping criteria for gradient")
 parser.add_argument('--verbose', '-v', type=int, default = 2)
 parser.add_argument('--fixed_beta', '-fb', action='store_true',help='fix (not optimise) beta (distance scaling)')
 parser.add_argument('--evaluation', '-e', action='store_true',help='perform evaluation as well')
+parser.add_argument('--coloured_ply', '-cp', type=float, nargs=2, help='vertices in out PLY are coloured by their curvature')
 parser.add_argument('--jitter', '-j', type=float, default=0, help='jitter initial coordinates to make them in general position.')
 args = parser.parse_args()
 
@@ -137,6 +140,7 @@ if args.boundary_vertex is None and args.lambda_bdvert>0:
 plydata = PlyData.read(args.input)
 vert = np.vstack([plydata['vertex']['x'],plydata['vertex']['y'],plydata['vertex']['z']]).astype(np.float64).T
 face = plydata['face']['vertex_indices']
+mesh = None # loaded later if necessary
 print("reading edge length from ", args.edge_length)
 edgedat = np.loadtxt(args.edge_length,delimiter=",")
 if edgedat.shape[1]==4:  ## with weight information
@@ -148,6 +152,15 @@ else:
 inedge = edgedat[:,:2].astype(np.uint32)
 edgelen = edgedat[:,2]
 
+# edge weight correction
+if args.lambda_bdedge>-1:
+    mesh = TriangleMesh(vert,face)
+    for k,(i,j) in enumerate(inedge):
+        if frozenset({i,j}) in mesh.b_edges:
+            edgeweight[k]=args.lambda_bdedge
+#    print(len(mesh.b_edges),sum(edgeweight==args.lambda_bdedge))    
+
+# boundary vertex coordinates
 fixed_coords = None
 if args.boundary_vertex:
     print("reading boundary data from ", args.boundary_vertex)
@@ -194,10 +207,8 @@ else:
 # optimise
 n_iter=0
 start = time.time()
-if args.lambda_convex>0:
+if args.lambda_convex>0 and mesh is None:
     mesh = TriangleMesh(vert,face)
-else:
-    mesh = None
 
 wb = np.sqrt(args.lambda_bdvert*len(edgelen2)/max(1,len(args.fixed_vert)))
 wc = np.sqrt(args.lambda_convex*len(edgelen2)/max(1,len(vert)))
@@ -230,12 +241,21 @@ if args.optimizer in ["lm","trf"]:
 else:
     import autograd.numpy as np
     from autograd import grad, jacobian, hessian
-    # jacobian and hessian by autograd
-    target = lambda x: np.sum(length_error(x,edgelen2,inedge,edgeweight)**2) + wb**2*np.sum(boundary_error(x,fixed_coords,args.fixed_vert,vertweight)**2)
-    if args.optimizer in ['CG','BFGS']:
-        res = minimize(target, x0, method = args.optimizer,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target))
+    ord = args.norm_order
+    if wc>0:
+        target = lambda x: np.linalg.norm(length_error(x,edgelen2,inedge,edgeweight),ord=ord) + wb**2*np.linalg.norm(boundary_error(x,fixed_coords,args.fixed_vert,vertweight),ord=ord) + wc**2*np.linalg.norm(convexity_error(x,mesh),ord=ord)
     else:
-        res = minimize(target, x0, method = args.optimizer,options={'gtol': args.gtol, 'disp': True}, jac = jacobian(target), hess=hessian(target))
+        target = lambda x: np.linalg.norm(length_error(x,edgelen2,inedge,edgeweight),ord=ord) + wb**2*np.linalg.norm(boundary_error(x,fixed_coords,args.fixed_vert,vertweight),ord=ord)
+    if ord == 1:
+        jac = None
+    else:
+        jac = jacobian(target)
+    if args.optimizer in ['CG','BFGS']:
+        hess = None
+    else:
+        hess = hessian(target)
+    print("autograd")
+    res = minimize(target, x0, method = args.optimizer,options={'gtol': args.gtol, 'disp': True}, jac = jac, hess=hess)
 
 elapsed_time = time.time() - start
 print ("elapsed_time:{0}".format(elapsed_time) + "[sec]")
@@ -248,14 +268,29 @@ else:
 vert2=np.reshape(res.x[:-1],(-1,3))
 #print(vert2[:,2].min())
 
-print("beta: {}, cost: {}, boundary MAE: {}".format(beta, np.abs(res.cost).sum(), (np.sqrt(np.sum( (fixed_coords-vert2[args.fixed_vert])**2, axis=1 )) ).mean()  ))
+if args.optimizer in ["lm","trf"]:
+    print("beta: {}, cost: {}, boundary MAE: {}".format(beta, np.abs(res.cost).sum(), (np.sqrt(np.sum( (fixed_coords-vert2[args.fixed_vert])**2, axis=1 )) ).mean()  ))
 
 # output
 bfn = os.path.basename(fn)
 bfn = os.path.join(args.outdir,bfn)
 np.savetxt(bfn+"_edge_scaled.csv",np.hstack([inedge,np.sqrt(beta*edgelen2[:,np.newaxis])]),delimiter=",",fmt="%i,%i,%f")
 #np.savetxt(bfn+"_final.txt",vert2)
-save_ply(vert2,face,bfn+"_final.ply")
+if args.coloured_ply is not None:
+    mesh_final = TriangleMesh(vert2,face)
+    g_final = DiscreteRiemannianMetric(mesh_final, mesh_final.lengths)
+    if args.coloured_ply[0]>2*np.pi:
+        vmin = np.min(g_final._K)
+    else:
+        vmin = args.coloured_ply[0]
+    if args.coloured_ply[1]>2*np.pi:
+        vmax = np.max(g_final._K)
+    else:
+        vmax = args.coloured_ply[1]
+    colour = np.array(255*plt.cm.bwr((g_final._K-vmin)/(vmax-vmin)), dtype=np.uint8)
+else:
+    colour = None
+save_ply(vert2,face,bfn+"_final.ply",colour)
 
 if args.evaluation:
     dn = os.path.dirname(__file__)
